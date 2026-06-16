@@ -331,6 +331,71 @@ body {
 #game-over-msg { font-size: 1.2rem; margin-bottom: 28px; opacity: 0.9; }
 #game-over-card .btn-row { justify-content: center; }
 
+/* Round wind (center info) */
+#round-wind { font-weight: 700; color: var(--gold); }
+
+/* Running session score chip next to each player */
+.player-points {
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(0,0,0,0.3);
+  border-radius: 10px;
+  padding: 1px 7px;
+  opacity: 0.85;
+}
+
+/* ─── GAME-OVER SCORE BREAKDOWN ───────────────────── */
+#game-over-msg { margin-bottom: 16px; }
+#game-over-detail { margin-bottom: 24px; text-align: left; }
+.score-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.score-faan { font-size: 1.6rem; font-weight: 900; color: var(--gold); }
+.score-limit {
+  font-size: 0.7rem; font-weight: 800; letter-spacing: 1px;
+  background: #f44336; color: #fff; padding: 2px 7px; border-radius: 4px;
+}
+.score-points { font-size: 1rem; opacity: 0.8; }
+.score-breakdown {
+  list-style: none;
+  background: rgba(0,0,0,0.25);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+}
+.score-breakdown li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 0.9rem;
+}
+.score-cn { opacity: 0.55; font-size: 0.8rem; margin-left: 4px; }
+.score-b-faan { color: var(--gold); font-weight: 700; }
+.score-totals { border-top: 1px solid rgba(255,255,255,0.12); padding-top: 10px; }
+.score-total-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 0.92rem;
+}
+.st-name { font-weight: 600; }
+.pay-plus { color: #4caf50; font-weight: 700; }
+.pay-minus { color: #ff6b6b; font-weight: 700; }
+.pay-zero { opacity: 0.35; }
+.score-running {
+  min-width: 42px;
+  text-align: right;
+  font-weight: 800;
+  opacity: 0.9;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

@@ -5,6 +5,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const { createDeck, shuffle, sortTiles, checkWin, getValidClaims } = require('./mahjong');
 const { pickBotName, chooseDiscard, findConcealedKong, decideClaim } = require('./bot');
+const { scoreWin, computePayments } = require('./scoring');
 
 const app = express();
 const server = http.createServer(app);
@@ -14,6 +15,14 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const rooms = {};
 const WINDS = ['east', 'south', 'west', 'north'];
+
+// HK faan scoring rules. Override per-deployment via environment variables.
+// MIN_FAAN=3 enforces the traditional "no chicken hand" minimum.
+const SCORING = {
+  minFaan: Number(process.env.MIN_FAAN) || 0,
+  limitFaan: Number(process.env.LIMIT_FAAN) || 13,
+  basePoints: Number(process.env.BASE_POINTS) || 1,
+};
 
 function genCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -31,11 +40,14 @@ function publicRoom(room) {
     code: room.code,
     state: room.state,
     hostIndex: 0,
+    roundWind: WINDS[room.roundWind || 0],
+    dealer: room.dealer || 0,
     players: room.players.map(p => ({
       name: p.name,
       seatWind: p.seatWind,
       connected: p.connected,
       isBot: !!p.isBot,
+      points: p.points || 0,
     })),
   };
 }
@@ -54,6 +66,7 @@ function gameStateFor(room, playerIndex) {
       melds: p.melds,
       flowers: p.flowers,
       connected: p.connected,
+      points: p.points || 0,
     })),
     wallCount: g.wall.length,
     discardPile: g.discardPile,
@@ -62,6 +75,8 @@ function gameStateFor(room, playerIndex) {
     lastDiscard: g.lastDiscard,
     lastDiscardPlayer: g.lastDiscardPlayer,
     claimDeadline: g.claimDeadline,
+    roundWind: WINDS[room.roundWind || 0],
+    dealer: room.dealer || 0,
   };
 }
 
@@ -95,19 +110,21 @@ function drawFlowers(room, playerIndex) {
 function startGame(room) {
   const wall = shuffle(createDeck());
   const n = room.players.length;
+  if (room.dealer == null || room.dealer >= n) room.dealer = 0;
+  assignSeatWinds(room);
 
   room.players.forEach(p => { p.hand = []; p.melds = []; p.flowers = []; });
 
-  // Deal 13 to each, dealer gets 14
+  // Deal 13 to each, dealer (East) gets 14
   for (let r = 0; r < 13; r++)
     for (let i = 0; i < n; i++)
       room.players[i].hand.push(wall.pop());
-  room.players[0].hand.push(wall.pop());
+  room.players[room.dealer].hand.push(wall.pop());
 
   room.game = {
     wall,
     discardPile: [],
-    currentTurn: 0,
+    currentTurn: room.dealer,
     phase: 'discard', // dealer already has 14
     lastDiscard: null,
     lastDiscardPlayer: null,
@@ -130,6 +147,15 @@ function endGame(room, result) {
   const g = room.game;
   if (g?.claimTimeout) { clearTimeout(g.claimTimeout); g.claimTimeout = null; }
   room.state = 'finished';
+
+  // Apply point transfers to the running session scoreboard.
+  if (result.payments) {
+    result.payments.forEach((amt, i) => { room.players[i].points = (room.players[i].points || 0) + amt; });
+  }
+  result.totals = room.players.map(p => p.points || 0);
+  result.roundWind = WINDS[room.roundWind || 0];
+  room.lastResult = result;
+
   broadcast(room);
   io.to(room.code).emit('gameOver', result);
 }
@@ -166,9 +192,14 @@ function processClaims(room) {
   if (win) {
     const pi = parseInt(win[0]);
     const p = room.players[pi];
+    const score = win[1].score || scoreWin(ronContext(room, pi), SCORING);
     p.hand.push(g.lastDiscard);
     g.discardPile.pop();
-    endGame(room, { type: 'ron', winner: pi, winnerName: p.name });
+    const payments = computePayments(score, pi, room.players.length, false, g.lastDiscardPlayer, SCORING);
+    endGame(room, {
+      type: 'ron', winner: pi, winnerName: p.name, score, payments,
+      discarder: g.lastDiscardPlayer, discarderName: room.players[g.lastDiscardPlayer].name,
+    });
     return;
   }
 
@@ -233,6 +264,35 @@ function processClaims(room) {
   advanceTurn(room);
 }
 
+// ── Scoring helpers ──────────────────────────────────────────────────────────
+
+// Build a scoreWin() context. `hand` must already include the winning tile.
+function winContext(room, winnerIndex, hand, selfDraw) {
+  const p = room.players[winnerIndex];
+  return {
+    hand,
+    melds: p.melds,
+    seatWind: p.seatWind,
+    roundWind: WINDS[room.roundWind || 0],
+    selfDraw,
+    flowers: p.flowers,
+    lastTile: room.game.wall.length === 0,
+  };
+}
+const ronContext = (room, i) => winContext(room, i, [...room.players[i].hand, room.game.lastDiscard], false);
+const selfDrawContext = (room, i) => winContext(room, i, room.players[i].hand, true);
+
+// End the game on a self-draw, if the hand meets the faan minimum. Returns
+// whether the win was awarded (false = below minimum, keep playing).
+function finishSelfDraw(room, playerIndex) {
+  const score = scoreWin(selfDrawContext(room, playerIndex), SCORING);
+  if (score.faan < SCORING.minFaan) return false;
+  const p = room.players[playerIndex];
+  const payments = computePayments(score, playerIndex, room.players.length, true, null, SCORING);
+  endGame(room, { type: 'tsumo', winner: playerIndex, winnerName: p.name, score, payments });
+  return true;
+}
+
 // ── Shared actions (used by both sockets and bots) ──────────────────────────
 
 function doDiscard(room, playerIndex, tileId) {
@@ -271,11 +331,16 @@ function registerClaim(room, playerIndex, type, tileIds) {
   const valid = getValidClaims(p.hand, p.melds, g.lastDiscard, isNext);
   if (!valid.includes(type)) return;
 
-  g.claims[playerIndex] = { type, tileIds: tileIds || [] };
-
   if (type === 'win') {
+    const score = scoreWin(ronContext(room, playerIndex), SCORING);
+    if (score.faan < SCORING.minFaan) {
+      if (p.socketId) io.to(p.socketId).emit('actionError', `Not enough faan to win (${score.faan}/${SCORING.minFaan}).`);
+      return;
+    }
+    g.claims[playerIndex] = { type, tileIds: [], score };
     processClaims(room);
   } else {
+    g.claims[playerIndex] = { type, tileIds: tileIds || [] };
     checkAllResponded(room);
   }
 }
@@ -332,10 +397,7 @@ function botTakeTurn(room, playerIndex) {
   const g = room.game;
   const p = room.players[playerIndex];
 
-  if (checkWin(p.hand, p.melds)) {
-    endGame(room, { type: 'tsumo', winner: playerIndex, winnerName: p.name });
-    return;
-  }
+  if (checkWin(p.hand, p.melds) && finishSelfDraw(room, playerIndex)) return;
 
   const kongTile = findConcealedKong(p.hand);
   if (kongTile && g.wall.length > 0) {
@@ -363,9 +425,19 @@ function botRespondClaim(room, playerIndex) {
 
 // ── Room membership helpers ──────────────────────────────────────────────────
 
-function reindexPlayers(room) {
+// Seat winds are relative to the dealer (East). Player at the dealer seat is
+// East, the next is South, and so on.
+function assignSeatWinds(room) {
+  const n = room.players.length;
+  if (room.dealer == null || room.dealer >= n) room.dealer = 0;
   room.players.forEach((p, i) => {
-    p.seatWind = WINDS[i];
+    p.seatWind = WINDS[(i - room.dealer + 4) % 4];
+  });
+}
+
+function reindexPlayers(room) {
+  assignSeatWinds(room);
+  room.players.forEach((p, i) => {
     if (!p.isBot && p.socketId) {
       const s = io.sockets.sockets.get(p.socketId);
       if (s) s.data.playerIndex = i;
@@ -393,8 +465,8 @@ io.on('connection', (socket) => {
     do { code = genCode(); } while (rooms[code]);
 
     const token = genToken();
-    const player = { socketId: socket.id, token, name: (playerName || 'Player').trim().slice(0, 20) || 'Player', seatWind: 'east', hand: [], melds: [], flowers: [], connected: true, isBot: false };
-    rooms[code] = { code, players: [player], state: 'waiting', game: null, cleanupTimer: null };
+    const player = { socketId: socket.id, token, name: (playerName || 'Player').trim().slice(0, 20) || 'Player', seatWind: 'east', hand: [], melds: [], flowers: [], connected: true, isBot: false, points: 0 };
+    rooms[code] = { code, players: [player], state: 'waiting', game: null, cleanupTimer: null, dealer: 0, roundWind: 0, dealerPasses: 0, lastResult: null };
     socket.join(code);
     socket.data = { code, playerIndex: 0 };
     socket.emit('roomCreated', { code, playerIndex: 0, token });
@@ -410,8 +482,9 @@ io.on('connection', (socket) => {
 
     const token = genToken();
     const playerIndex = room.players.length;
-    const player = { socketId: socket.id, token, name: (playerName || 'Player').trim().slice(0, 20) || 'Player', seatWind: WINDS[playerIndex], hand: [], melds: [], flowers: [], connected: true, isBot: false };
+    const player = { socketId: socket.id, token, name: (playerName || 'Player').trim().slice(0, 20) || 'Player', seatWind: WINDS[playerIndex], hand: [], melds: [], flowers: [], connected: true, isBot: false, points: 0 };
     room.players.push(player);
+    assignSeatWinds(room);
     socket.join(c);
     socket.data = { code: c, playerIndex };
     socket.emit('roomJoined', { code: c, playerIndex, token });
@@ -444,7 +517,8 @@ io.on('connection', (socket) => {
     if (room.players.length >= 4) return socket.emit('error', 'Room is full');
 
     const name = pickBotName(room.players.map(p => p.name));
-    room.players.push({ socketId: null, token: null, name, seatWind: WINDS[room.players.length], hand: [], melds: [], flowers: [], connected: true, isBot: true });
+    room.players.push({ socketId: null, token: null, name, seatWind: WINDS[room.players.length], hand: [], melds: [], flowers: [], connected: true, isBot: true, points: 0 });
+    assignSeatWinds(room);
     io.to(code).emit('roomUpdate', publicRoom(room));
   });
 
@@ -521,8 +595,8 @@ io.on('connection', (socket) => {
     if (g.phase !== 'discard' || g.currentTurn !== playerIndex) return;
 
     const p = room.players[playerIndex];
-    if (checkWin(p.hand, p.melds)) {
-      endGame(room, { type: 'tsumo', winner: playerIndex, winnerName: p.name });
+    if (checkWin(p.hand, p.melds) && !finishSelfDraw(room, playerIndex)) {
+      socket.emit('actionError', `Not enough faan to win (need ${SCORING.minFaan}).`);
     }
   });
 
@@ -559,12 +633,22 @@ io.on('connection', (socket) => {
     const room = rooms[code];
     if (!room || playerIndex !== 0) return;
     if (room.game?.claimTimeout) clearTimeout(room.game.claimTimeout);
-    // Rotate winds
-    room.players.forEach(p => {
-      p.seatWind = WINDS[(WINDS.indexOf(p.seatWind) + 1) % 4];
-    });
+
+    // Dealer keeps the deal on a win or a draw; otherwise it passes to the next
+    // seat. A full lap of the dealership advances the prevailing wind (E→S→W→N).
+    const n = room.players.length;
+    const res = room.lastResult;
+    const dealerRepeats = !res || res.type === 'draw' || res.winner === room.dealer;
+    if (!dealerRepeats) {
+      room.dealer = (room.dealer + 1) % n;
+      room.dealerPasses = (room.dealerPasses || 0) + 1;
+      if (room.dealerPasses % n === 0) room.roundWind = ((room.roundWind || 0) + 1) % 4;
+    }
+    assignSeatWinds(room);
+
     room.state = 'waiting';
     room.game = null;
+    room.lastResult = null;
     io.to(code).emit('roomUpdate', publicRoom(room));
     io.to(code).emit('backToLobby');
   });

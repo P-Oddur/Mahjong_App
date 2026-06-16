@@ -42,12 +42,32 @@ To play over the internet, either forward port 3000 on your router or use a tunn
 ngrok http 3000
 ```
 
+### Scoring
+
+Wins are scored with a Hong Kong **faan (番)** system. After each hand the
+game-over screen shows the winning patterns, the faan total, the points the
+hand is worth, and a running session scoreboard.
+
+- **Prevailing (round) wind** starts at East and advances E→S→W→N each time the
+  dealership completes a full lap of the table. The dealer keeps the deal on a
+  win or a draw; otherwise it passes to the next seat.
+- **Payments:** on a self-draw every other player pays the winner; on a discard
+  win the player who discarded pays in full.
+- **Patterns** recognised include self-draw, concealed hand, all sequences
+  (平糊), all triplets (對對糊), dragon/seat/round-wind triplets, half & full
+  flush, small three dragons, the big limit hands (大三元 / 大四喜 / 字一色 …),
+  and seat flowers. Scoring lives in `scoring.js` as a data-driven pattern
+  table — adding a new rule means appending one entry, no engine changes.
+
 ### Options (environment variables)
 
-| Variable       | Default | Effect                                  |
-| -------------- | ------- | --------------------------------------- |
-| `PORT`         | `3000`  | HTTP/WebSocket port                     |
-| `BOT_DELAY_MS` | `700`   | Bot "thinking" time per move (ms)       |
+| Variable       | Default | Effect                                            |
+| -------------- | ------- | ------------------------------------------------- |
+| `PORT`         | `3000`  | HTTP/WebSocket port                               |
+| `BOT_DELAY_MS` | `700`   | Bot "thinking" time per move (ms)                 |
+| `MIN_FAAN`     | `0`     | Minimum faan to win (set `3` for traditional HK)  |
+| `LIMIT_FAAN`   | `13`    | Faan at which a hand is a limit hand (caps payout)|
+| `BASE_POINTS`  | `1`     | Payout multiplier (points = `BASE × 2^faan`)      |
 
 PowerShell example:
 
@@ -65,7 +85,8 @@ npm run dev
 
 ## Test
 
-Runs the end-to-end suite (spawns its own server on port 3100, plays a full game against 3 bots, exercises rejoin/reconnect):
+Runs the scoring unit tests, then the end-to-end suite (spawns its own server on
+port 3100, plays a full game against 3 bots, exercises rejoin/reconnect):
 
 ```sh
 npm test
@@ -77,11 +98,13 @@ npm test
 | ------------------- | ---------------------------------------------------- |
 | `server.js`         | Express + Socket.io server: rooms, game flow, bots   |
 | `mahjong.js`        | Core rules: deck, win detection, claim validation    |
+| `scoring.js`        | HK faan scoring: hand decomposition + pattern table  |
 | `bot.js`            | Bot AI: discard scoring and claim decisions          |
 | `public/index.html` | Lobby: create/join room, add/remove bots             |
 | `public/game.html`  | Game board page                                      |
 | `public/game.js`    | Client game logic and rendering                      |
 | `public/style.css`  | Green-felt theme and tile styles                     |
+| `test/scoring.test.js` | Unit tests for the faan scoring engine            |
 | `test/e2e.js`       | Self-contained end-to-end test                       |
 
 ## Notes

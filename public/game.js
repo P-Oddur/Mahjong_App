@@ -55,12 +55,14 @@ socket.on('gameUpdate', state => {
   render();
 });
 
-socket.on('gameOver', ({ type, winner, winnerName }) => {
+socket.on('gameOver', (result) => {
+  const { type, winner, winnerName, discarderName } = result;
   if (gameState) { gameState.phase = 'over'; render(); }
   const msg = type === 'draw'   ? 'Draw — no more tiles in the wall.' :
               type === 'tsumo'  ? `${winnerName} wins by self-draw! 🎉` :
-                                  `${winnerName} wins by Ron! 🎉`;
+                                  `${winnerName} wins by Ron${discarderName ? ' off ' + discarderName : ''}! 🎉`;
   document.getElementById('game-over-msg').textContent = msg;
+  renderScoreDetail(result);
   document.getElementById('game-over').classList.remove('hidden');
   document.getElementById('btn-new-game').classList.toggle('hidden', winner === null);
 });
@@ -70,6 +72,9 @@ socket.on('backToLobby', () => { window.location.href = '/'; });
 socket.on('playerDisconnected', ({ name }) => {
   setStatus(`${name} disconnected`, 'waiting');
 });
+
+// Rejected action (e.g. trying to win below the faan minimum).
+socket.on('actionError', msg => setStatus(typeof msg === 'string' ? msg : 'Action not allowed', 'waiting'));
 
 // ── Tile helpers ─────────────────────────────────────────────────────────────
 function tileGlyph(tile) {
@@ -142,6 +147,7 @@ function render() {
   // Header
   document.getElementById('wall-info').textContent = `Wall: ${s.wallCount}`;
   updateStatus(s);
+  updateRoundWind(s);
 
   // Player areas
   renderArea('bottom', atPos.bottom, s, true);
@@ -176,6 +182,62 @@ function setStatus(text, cls) {
   el.className = `status ${cls}`;
 }
 
+const WIND_CN = { east: '東', south: '南', west: '西', north: '北' };
+const WIND_EN = { east: 'East', south: 'South', west: 'West', north: 'North' };
+
+function updateRoundWind(s) {
+  const el = document.getElementById('round-wind');
+  if (!el) return;
+  el.textContent = s.roundWind ? `Round: ${WIND_CN[s.roundWind]} ${WIND_EN[s.roundWind]}` : '';
+}
+
+// Build the faan breakdown + payment summary on the game-over screen.
+function renderScoreDetail(result) {
+  const el = document.getElementById('game-over-detail');
+  if (!el) return;
+  el.innerHTML = '';
+  const { score, payments, totals } = result;
+
+  if (score) {
+    const head = document.createElement('div');
+    head.className = 'score-head';
+    head.innerHTML =
+      `<span class="score-faan">${score.faan} 番</span>` +
+      (score.isLimit ? '<span class="score-limit">LIMIT</span>' : '') +
+      `<span class="score-points">${score.points} pts</span>`;
+    el.appendChild(head);
+
+    if (score.breakdown?.length) {
+      const ul = document.createElement('ul');
+      ul.className = 'score-breakdown';
+      score.breakdown.forEach(b => {
+        const cnt = b.count ? ` ×${b.count}` : '';
+        const li = document.createElement('li');
+        li.innerHTML = `<span>${b.name}${cnt} <span class="score-cn">${b.cn}</span></span><span class="score-b-faan">+${b.faan}</span>`;
+        ul.appendChild(li);
+      });
+      el.appendChild(ul);
+    }
+  }
+
+  // Per-player point change and running session total.
+  if (totals && gameState?.players) {
+    const tbl = document.createElement('div');
+    tbl.className = 'score-totals';
+    gameState.players.forEach((p, i) => {
+      const delta = payments?.[i] || 0;
+      const deltaStr = delta
+        ? `<span class="${delta > 0 ? 'pay-plus' : 'pay-minus'}">${delta > 0 ? '+' : ''}${delta}</span>`
+        : '<span class="pay-zero">·</span>';
+      const row = document.createElement('div');
+      row.className = 'score-total-row';
+      row.innerHTML = `<span class="st-name">${p.isBot ? '🤖 ' : ''}${p.name}</span>${deltaStr}<span class="score-running">${totals[i]}</span>`;
+      tbl.appendChild(row);
+    });
+    el.appendChild(tbl);
+  }
+}
+
 // ── Player area ──────────────────────────────────────────────────────────────
 function renderArea(position, pIdx, s, isMe) {
   const el = document.getElementById(`player-${position}`);
@@ -192,7 +254,7 @@ function renderArea(position, pIdx, s, isMe) {
   const nameRow = document.createElement('div');
   nameRow.className = 'player-name';
   const windMap = { east:'東', south:'南', west:'西', north:'北' };
-  nameRow.innerHTML = `<span>${p.isBot ? '🤖 ' : ''}${p.name}</span><span class="seat-wind">${windMap[p.seatWind]}</span>`;
+  nameRow.innerHTML = `<span>${p.isBot ? '🤖 ' : ''}${p.name}</span><span class="seat-wind">${windMap[p.seatWind]}</span><span class="player-points" title="Session score">${p.points ?? 0}</span>`;
   if (isTurn) nameRow.innerHTML += '<span class="turn-indicator">▶</span>';
   if (!isMe) nameRow.innerHTML += `<span class="hand-count">(${p.handCount})</span>`;
   el.appendChild(nameRow);
