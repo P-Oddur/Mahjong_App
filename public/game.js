@@ -49,9 +49,9 @@ socket.on('gameUpdate', state => {
   const prevPhase = gameState?.phase;
   gameState = state;
   if (state.playerIndex != null) myIndex = state.playerIndex;
-  // Reset claim response tracking on new discard
-  if (prevPhase !== 'claim' && state.phase === 'claim') claimResponded = false;
-  if (prevPhase === 'claim' && state.phase !== 'claim') claimResponded = false;
+  // Reset response tracking when entering/leaving a claim or rob window
+  const respondable = ph => ph === 'claim' || ph === 'rob';
+  if (respondable(state.phase) !== respondable(prevPhase)) claimResponded = false;
   render();
 });
 
@@ -169,6 +169,12 @@ function updateStatus(s) {
     cls  = isMe ? 'my-turn' : 'waiting';
   } else if (s.phase === 'claim') {
     text = `${s.players[s.lastDiscardPlayer]?.name} discarded`;
+    cls  = 'claiming';
+  } else if (s.phase === 'rob') {
+    const declarer = s.robKong ? s.players[s.robKong.seat]?.name : '';
+    text = s.robKong && s.robKong.seat === myIndex
+      ? 'Adding kong — others may rob…'
+      : `${declarer} is adding a kong — rob?`;
     cls  = 'claiming';
   } else {
     text = '...'; cls = 'waiting';
@@ -351,6 +357,18 @@ function renderActions(s) {
         selfPanel.appendChild(btn);
       }
     });
+
+    // Added kong (加槓): upgrade an exposed pong with the matching 4th tile
+    me.melds.forEach(meld => {
+      if (meld.type !== 'pong') return;
+      const t = me.hand.find(h => h.suit === meld.tiles[0].suit && h.value === meld.tiles[0].value);
+      if (!t) return;
+      const btn = document.createElement('button');
+      btn.className = 'action-btn kong-btn';
+      btn.textContent = `Kong ➕ ${tileLabel(t)}`;
+      btn.onclick = () => socket.emit('declareAddedKong', { tileId: t.id });
+      selfPanel.appendChild(btn);
+    });
   }
 
   // Claim window — not my discard
@@ -395,6 +413,22 @@ function renderActions(s) {
     };
     claimPanel.appendChild(passBtn);
   }
+
+  // Robbing-the-kong window — anyone but the declarer may win on the added tile
+  if (s.phase === 'rob' && s.robKong && s.robKong.seat !== myIndex && !claimResponded && me.hand) {
+    if (canWin([...me.hand, s.robKong.tile], me.melds)) {
+      const btn = document.createElement('button');
+      btn.className = 'action-btn win-btn';
+      btn.textContent = '🏆 Rob!';
+      btn.onclick = () => { socket.emit('claim', { type: 'win' }); markClaimResponded(claimPanel); };
+      claimPanel.appendChild(btn);
+    }
+    const passBtn = document.createElement('button');
+    passBtn.className = 'action-btn pass-btn';
+    passBtn.textContent = 'Pass';
+    passBtn.onclick = () => { socket.emit('pass'); markClaimResponded(claimPanel); };
+    claimPanel.appendChild(passBtn);
+  }
 }
 
 function markClaimResponded(claimPanel) {
@@ -409,7 +443,7 @@ function updateTimer(s) {
   if (claimTimerInterval) { clearInterval(claimTimerInterval); claimTimerInterval = null; }
   const wrap = document.getElementById('claim-timer');
   const bar  = document.getElementById('claim-timer-bar');
-  if (s.phase !== 'claim' || !s.claimDeadline) {
+  if ((s.phase !== 'claim' && s.phase !== 'rob') || !s.claimDeadline) {
     wrap.classList.add('hidden');
     return;
   }

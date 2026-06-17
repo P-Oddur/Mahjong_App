@@ -88,5 +88,36 @@ check('payments: self-draw vs discard', () => {
   assert.deepStrictEqual(ron, [0, 8, 0, -8]);
 });
 
+// Base concealed all-sequence hand (self = self-draw(1) + concealed(1) + all-chows(1)).
+const baseHand = () => [...run('man', 1), ...run('man', 4), ...run('man', 7), ...run('pin', 1), ...pair('bam', 5)];
+
+// 9. 海底撈月 — win by self-draw on the last wall tile.
+check('海底撈月 (last-tile self-draw)', () => {
+  const s = scoreWin({ hand: baseHand(), melds: [], seatWind: 'east', roundWind: 'east', selfDraw: true, lastTile: true }, cfg);
+  assert.ok(ids(s).includes('last-tile-draw'), `ids: ${ids(s)}`);
+  assert.strictEqual(s.faan, 4, `got ${s.faan}`); // self-draw + concealed + all-chows + last-tile
+});
+
+// 10. 河底撈魚 — win by claiming the last discard.
+check('河底撈魚 (last-tile discard)', () => {
+  const s = scoreWin({ hand: baseHand(), melds: [], seatWind: 'east', roundWind: 'east', selfDraw: false, lastTile: true }, cfg);
+  assert.ok(ids(s).includes('last-tile-discard'), `ids: ${ids(s)}`);
+  assert.strictEqual(s.faan, 3, `got ${s.faan}`); // concealed + all-chows + last-tile
+});
+
+// 11. 槓上開花 — win on a kong's replacement tile (self-draw bonus).
+check('槓上開花 (kong replacement)', () => {
+  const s = scoreWin({ hand: baseHand(), melds: [], seatWind: 'east', roundWind: 'east', selfDraw: true, kongReplacement: true }, cfg);
+  assert.ok(ids(s).includes('kong-replacement'), `ids: ${ids(s)}`);
+  assert.strictEqual(s.faan, 4, `got ${s.faan}`); // self-draw + concealed + all-chows + kong-replacement
+});
+
+// 12. 搶槓 — robbing the kong (a discard-type win).
+check('搶槓 (robbing the kong)', () => {
+  const s = scoreWin({ hand: baseHand(), melds: [], seatWind: 'east', roundWind: 'east', selfDraw: false, robbingKong: true }, cfg);
+  assert.ok(ids(s).includes('robbing-kong'), `ids: ${ids(s)}`);
+  assert.strictEqual(s.faan, 3, `got ${s.faan}`); // concealed + all-chows + robbing-kong
+});
+
 console.log(`\n${passed} scoring tests passed`);
 if (process.exitCode) { console.error('SCORING TESTS FAILED'); }
