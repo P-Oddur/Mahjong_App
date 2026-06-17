@@ -3,9 +3,18 @@ node_modules/
 
 # Local Claude Code settings / instructions (machine-specific)
 .claude/settings.local.json
+.mcp.json
 CLAUDE.md
+
+# Local dev tooling (personal, not committed)
+tools/release.js
 
 # Logs and OS cruft
 *.log
 Thumbs.db
 .DS_Store
+
+# Blender working sources + local renders (shipped assets are exported .glb in public/assets/)
+*.blend
+*.blend1
+/assets/
