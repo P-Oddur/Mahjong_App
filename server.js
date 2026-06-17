@@ -24,6 +24,8 @@ const SCORING = {
   basePoints: Number(process.env.BASE_POINTS) || 1,
 };
 
+const CLAIM_WINDOW_MS = 8000; // claim & rob response window (ms)
+
 function genCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code = '';
@@ -126,6 +128,15 @@ function drawFlowers(room, playerIndex) {
       }
     }
   }
+}
+
+// Draw a replacement tile after a kong and flag it for 槓上開花 (no-op if the wall is empty).
+function drawReplacement(room, playerIndex) {
+  const g = room.game;
+  if (g.wall.length === 0) return;
+  room.players[playerIndex].hand.push(g.wall.pop());
+  drawFlowers(room, playerIndex);
+  g.kongReplacement = playerIndex;
 }
 
 function startGame(room) {
@@ -242,7 +253,7 @@ function processClaims(room) {
     p.melds.push({ type: 'kong', tiles: [...m, g.lastDiscard] });
     announceAction(room, pi, 'kong', [...m, g.lastDiscard]);
     g.discardPile.pop();
-    if (g.wall.length > 0) { p.hand.push(g.wall.pop()); drawFlowers(room, pi); g.kongReplacement = pi; }
+    drawReplacement(room, pi);
     g.currentTurn = pi;
     g.phase = 'discard';
     g.lastDiscard = null;
@@ -343,11 +354,11 @@ function openRobWindow(room, seat, tile, meldIndex) {
   g.robKong = { seat, tile, meldIndex };
   g.claims = {};
   g.passes = new Set();
-  g.claimDeadline = Date.now() + 8000;
+  g.claimDeadline = Date.now() + CLAIM_WINDOW_MS;
   if (g.claimTimeout) clearTimeout(g.claimTimeout);
   g.claimTimeout = setTimeout(() => {
     if (rooms[room.code] === room && room.game === g && g.phase === 'rob') resolveRob(room);
-  }, 8000);
+  }, CLAIM_WINDOW_MS);
   broadcast(room);
 }
 
@@ -391,7 +402,7 @@ function resolveRob(room) {
   g.passes = new Set();
   g.phase = 'discard';
   g.currentTurn = declarer;
-  if (g.wall.length > 0) { p.hand.push(g.wall.pop()); drawFlowers(room, declarer); g.kongReplacement = declarer; }
+  drawReplacement(room, declarer);
   broadcast(room);
 }
 
@@ -414,12 +425,12 @@ function doDiscard(room, playerIndex, tileId) {
   g.phase = 'claim';
   g.claims = {};
   g.passes = new Set();
-  g.claimDeadline = Date.now() + 8000;
+  g.claimDeadline = Date.now() + CLAIM_WINDOW_MS;
 
   if (g.claimTimeout) clearTimeout(g.claimTimeout);
   g.claimTimeout = setTimeout(() => {
     if (rooms[room.code] === room && room.game === g && g.phase === 'claim') processClaims(room);
-  }, 8000);
+  }, CLAIM_WINDOW_MS);
 
   broadcast(room);
 }
@@ -552,9 +563,7 @@ function botTakeTurn(room, playerIndex) {
     const four = p.hand.filter(t => t.suit === kongTile.suit && t.value === kongTile.value);
     p.hand = p.hand.filter(t => !four.includes(t));
     p.melds.push({ type: 'concealed-kong', tiles: four });
-    p.hand.push(g.wall.pop());
-    drawFlowers(room, playerIndex);
-    g.kongReplacement = playerIndex;
+    drawReplacement(room, playerIndex);
     broadcast(room); // re-schedules this bot to act again
     return;
   }
@@ -788,7 +797,7 @@ io.on('connection', (socket) => {
 
     p.hand = p.hand.filter(t => !matching.includes(t));
     p.melds.push({ type: 'concealed-kong', tiles: matching.slice(0, 4) });
-    if (g.wall.length > 0) { p.hand.push(g.wall.pop()); drawFlowers(room, playerIndex); g.kongReplacement = playerIndex; }
+    drawReplacement(room, playerIndex);
     broadcast(room);
   });
 

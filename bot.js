@@ -46,12 +46,14 @@ function chooseDiscard(hand, difficulty = 'normal', discardPile = []) {
   }
 
   if (difficulty === 'hard') {
+    // Among the least-useful tiles, prefer one already seen in the discard pile.
     const min = scored[0].s;
-    const candidates = scored.filter(x => x.s <= min + 10).map(x => x.t);
-    const seenInPile = t => discardPile.filter(d => d.suit === t.suit && d.value === t.value).length;
+    const pileCount = {};
+    for (const d of discardPile) { const k = `${d.suit}:${d.value}`; pileCount[k] = (pileCount[k] || 0) + 1; }
     let best = worst, bestSeen = -1;
-    for (const t of candidates) {
-      const seen = seenInPile(t);
+    for (const { t, s } of scored) {
+      if (s > min + 10) break; // scored is ascending; past the low-usefulness band, stop
+      const seen = pileCount[`${t.suit}:${t.value}`] || 0;
       if (seen > bestSeen) { bestSeen = seen; best = t; }
     }
     return best;
