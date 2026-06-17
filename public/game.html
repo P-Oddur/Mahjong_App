@@ -62,12 +62,14 @@
 
 <div id="game-over" class="hidden">
   <div id="game-over-card">
-    <h2>Game Over</h2>
+    <h2 id="game-over-title">Game Over</h2>
     <div id="game-over-msg"></div>
     <div id="game-over-detail"></div>
+    <div id="final-standings" class="hidden"></div>
     <div class="btn-row" style="justify-content:center;gap:12px;flex-wrap:wrap">
-      <button class="btn btn-primary" id="btn-new-game">New Game</button>
-      <button class="btn btn-secondary" id="btn-lobby">Back to Lobby</button>
+      <button class="btn btn-primary hidden" id="btn-next-hand">Next Hand</button>
+      <button class="btn btn-secondary hidden" id="btn-vote-end">🗳 Vote to end match</button>
+      <button class="btn btn-secondary hidden" id="btn-lobby">Back to Lobby</button>
     </div>
   </div>
 </div>

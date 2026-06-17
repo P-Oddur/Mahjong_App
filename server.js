@@ -47,6 +47,7 @@ function publicRoom(room) {
     hostIndex: 0,
     roundWind: WINDS[room.roundWind || 0],
     dealer: room.dealer || 0,
+    matchRounds: room.matchRounds || 4,
     players: room.players.map(p => ({
       name: p.name,
       seatWind: p.seatWind,
@@ -83,6 +84,9 @@ function gameStateFor(room, playerIndex) {
     claimDeadline: g.claimDeadline,
     roundWind: WINDS[room.roundWind || 0],
     dealer: room.dealer || 0,
+    handNumber: room.handNumber || 0,
+    dealerStreak: room.dealerStreak || 0,
+    matchRounds: room.matchRounds || 4,
     robKong: g.robKong ? { seat: g.robKong.seat, tile: g.robKong.tile } : null,
   };
 }
@@ -193,8 +197,82 @@ function endGame(room, result) {
   result.roundWind = WINDS[room.roundWind || 0];
   room.lastResult = result;
 
+  // Match progress: which hand/round this was, and whether the match is now
+  // complete (so the client shows final standings instead of "Next Hand").
+  result.handNumber = room.handNumber || 0;
+  result.dealerStreak = room.dealerStreak || 0;
+  result.matchRounds = room.matchRounds || 4;
+  result.matchOver = matchWillEndAfter(room, result);
+  if (result.matchOver) { room.matchOver = true; result.standings = computeStandings(room); }
+
   broadcast(room);
   io.to(room.code).emit('gameOver', result);
+}
+
+// ── Match flow: rounds, dealer rotation, standings ───────────────────────────
+
+// Would the match be complete once this hand's dealer-pass is applied? Dealer
+// keeps the deal on a win or draw (連莊), so those don't advance the round.
+function matchWillEndAfter(room, result) {
+  const n = room.players.length;
+  const dealerRepeats = result.type === 'draw' || result.winner === room.dealer;
+  const passes = (room.dealerPasses || 0) + (dealerRepeats ? 0 : 1);
+  return passes >= (room.matchRounds || 4) * n;
+}
+
+// Rotate the deal between hands. On a non-dealer win the deal passes to the next
+// seat and a full lap advances the prevailing wind (E→S→W→N); on a win/draw by
+// the dealer it stays put and the 連莊 streak grows.
+function advanceDealer(room) {
+  const n = room.players.length;
+  const res = room.lastResult;
+  const dealerRepeats = !res || res.type === 'draw' || res.winner === room.dealer;
+  if (dealerRepeats) {
+    room.dealerStreak = (room.dealerStreak || 0) + 1;
+  } else {
+    room.dealer = (room.dealer + 1) % n;
+    room.dealerStreak = 0;
+    room.dealerPasses = (room.dealerPasses || 0) + 1;
+    if (room.dealerPasses % n === 0) room.roundWind = ((room.roundWind || 0) + 1) % 4;
+  }
+  assignSeatWinds(room);
+}
+
+// Session scoreboard, ranked high→low; tied players share a rank.
+function computeStandings(room) {
+  const rows = room.players
+    .map((p, i) => ({ name: p.name, isBot: !!p.isBot, points: p.points || 0, seat: i }))
+    .sort((a, b) => b.points - a.points);
+  let rank = 0, prevPts = null;
+  rows.forEach((r, idx) => {
+    if (prevPts === null || r.points !== prevPts) { rank = idx + 1; prevPts = r.points; }
+    r.rank = rank;
+  });
+  return rows;
+}
+
+// Begin a brand-new match from a zeroed scoreboard.
+function startMatch(room) {
+  room.players.forEach(p => { p.points = 0; });
+  room.dealer = 0;
+  room.roundWind = 0;
+  room.dealerPasses = 0;
+  room.dealerStreak = 0;
+  room.handNumber = 1;
+  room.matchOver = false;
+  room.endVotes = new Set();
+  room.lastResult = null;
+  startGame(room);
+}
+
+// End the match (rounds complete or a unanimous vote) and broadcast standings.
+function finishMatch(room) {
+  if (room.game?.claimTimeout) { clearTimeout(room.game.claimTimeout); room.game.claimTimeout = null; }
+  room.matchOver = true;
+  room.state = 'finished';
+  room.game = null;
+  room.endVotes = new Set();
+  io.to(room.code).emit('matchOver', { standings: computeStandings(room), rounds: room.matchRounds || 4 });
 }
 
 function advanceTurn(room) {
@@ -633,7 +711,7 @@ io.on('connection', (socket) => {
 
     const token = genToken();
     const player = { socketId: socket.id, token, name: (playerName || 'Player').trim().slice(0, 20) || 'Player', seatWind: 'east', hand: [], melds: [], flowers: [], connected: true, isBot: false, points: 0 };
-    rooms[code] = { code, players: [player], state: 'waiting', game: null, cleanupTimer: null, dealer: 0, roundWind: 0, dealerPasses: 0, lastResult: null, chat: [] };
+    rooms[code] = { code, players: [player], state: 'waiting', game: null, cleanupTimer: null, dealer: 0, roundWind: 0, dealerPasses: 0, lastResult: null, chat: [], matchRounds: 4, handNumber: 0, dealerStreak: 0, matchOver: false, endVotes: new Set() };
     socket.join(code);
     socket.data = { code, playerIndex: 0 };
     socket.emit('roomCreated', { code, playerIndex: 0, token });
@@ -733,7 +811,17 @@ io.on('connection', (socket) => {
     const room = rooms[code];
     if (!room || playerIndex !== 0 || room.state !== 'waiting') return;
     if (room.players.length < 4) return socket.emit('error', 'Need 4 players — add bots to fill the table');
-    startGame(room);
+    startMatch(room);
+  });
+
+  socket.on('setMatchLength', ({ rounds } = {}) => {
+    const { code, playerIndex } = socket.data || {};
+    const room = rooms[code];
+    if (!room || playerIndex !== 0 || room.state !== 'waiting') return;
+    if ([1, 2, 4].includes(rounds)) {
+      room.matchRounds = rounds;
+      io.to(code).emit('roomUpdate', publicRoom(room));
+    }
   });
 
   socket.on('discard', ({ tileId }) => {
@@ -829,27 +917,45 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('newGame', () => {
+  // Deal the next hand of the match directly (no lobby round-trip).
+  socket.on('nextHand', () => {
     const { code, playerIndex } = socket.data || {};
     const room = rooms[code];
-    if (!room || playerIndex !== 0) return;
+    if (!room || playerIndex !== 0 || room.state !== 'finished' || room.matchOver) return;
+    advanceDealer(room);
+    room.handNumber = (room.handNumber || 0) + 1;
+    room.endVotes = new Set();
+    room.lastResult = null;
+    startGame(room);
+  });
+
+  // Players unanimously vote (between hands) to end the match early.
+  socket.on('endMatchVote', ({ value } = {}) => {
+    const { code, playerIndex } = socket.data || {};
+    const room = rooms[code];
+    if (!room || room.state !== 'finished' || room.matchOver) return;
+    const p = room.players[playerIndex];
+    if (!p || p.isBot) return;
+    if (!room.endVotes) room.endVotes = new Set();
+    if (value === false) room.endVotes.delete(playerIndex);
+    else room.endVotes.add(playerIndex);
+    const humans = room.players.map((pl, i) => ({ pl, i })).filter(x => !x.pl.isBot && x.pl.connected).map(x => x.i);
+    const voted = humans.filter(i => room.endVotes.has(i)).length;
+    io.to(code).emit('endVoteUpdate', { voted, needed: humans.length });
+    if (humans.length > 0 && voted >= humans.length) finishMatch(room);
+  });
+
+  // From the final-standings screen: reset the room to the lobby for a new match.
+  socket.on('returnToLobby', () => {
+    const { code } = socket.data || {};
+    const room = rooms[code];
+    if (!room || room.state !== 'finished') return;
     if (room.game?.claimTimeout) clearTimeout(room.game.claimTimeout);
-
-    // Dealer keeps the deal on a win or a draw; otherwise it passes to the next
-    // seat. A full lap of the dealership advances the prevailing wind (E→S→W→N).
-    const n = room.players.length;
-    const res = room.lastResult;
-    const dealerRepeats = !res || res.type === 'draw' || res.winner === room.dealer;
-    if (!dealerRepeats) {
-      room.dealer = (room.dealer + 1) % n;
-      room.dealerPasses = (room.dealerPasses || 0) + 1;
-      if (room.dealerPasses % n === 0) room.roundWind = ((room.roundWind || 0) + 1) % 4;
-    }
-    assignSeatWinds(room);
-
     room.state = 'waiting';
     room.game = null;
+    room.matchOver = false;
     room.lastResult = null;
+    room.endVotes = new Set();
     io.to(code).emit('roomUpdate', publicRoom(room));
     io.to(code).emit('backToLobby');
   });

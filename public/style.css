@@ -511,3 +511,14 @@ body {
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 2px; }
+
+/* Final standings (match end) */
+#final-standings { margin-top: 14px; }
+.standings-title { font-weight: 800; opacity: 0.85; margin-bottom: 6px; letter-spacing: 0.5px; text-align: center; }
+.standings-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 8px; }
+.standings-row + .standings-row { margin-top: 4px; }
+.standings-leader { background: rgba(240,192,64,0.16); }
+.standings-row .st-rank { width: 30px; text-align: center; font-weight: 800; }
+.standings-row .st-name { flex: 1; }
+.standings-row .st-pts { font-weight: 800; font-variant-numeric: tabular-nums; }
+.btn.vote-active { outline: 2px solid var(--gold); }

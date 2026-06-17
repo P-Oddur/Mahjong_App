@@ -46,6 +46,16 @@
     <ul class="players-list" id="players-list"></ul>
 
     <div id="lobby-actions">
+      <div id="match-length-row" class="hidden" style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <label for="match-length" style="font-size:0.82rem;opacity:0.85;white-space:nowrap">Match length</label>
+        <select id="match-length"
+                style="flex:1;padding:10px;border-radius:8px;border:2px solid rgba(255,255,255,0.3);background:rgba(0,0,0,0.4);color:#fff;font-weight:700;cursor:pointer;outline:none">
+          <option value="4">Full (東南西北)</option>
+          <option value="2">East + South (東南)</option>
+          <option value="1">East only (東圈)</option>
+        </select>
+      </div>
+      <div id="match-length-info" class="hidden" style="font-size:0.82rem;opacity:0.85;margin-bottom:10px"></div>
       <div id="add-bot-row" class="hidden" style="display:flex;gap:8px;margin-bottom:10px">
         <select id="bot-difficulty" title="New bot difficulty"
                 style="flex:0 0 auto;padding:10px;border-radius:8px;border:2px solid rgba(255,255,255,0.3);background:rgba(0,0,0,0.4);color:#fff;font-weight:700;cursor:pointer;outline:none">
@@ -104,6 +114,8 @@ function showLobby() {
 function updateHostControls() {
   $('btn-start').classList.toggle('hidden', !isHost);
   $('add-bot-row').classList.toggle('hidden', !isHost);
+  $('match-length-row').classList.toggle('hidden', !isHost);
+  $('match-length-info').classList.toggle('hidden', isHost);
   $('waiting-hint').classList.toggle('hidden', isHost);
 }
 
@@ -201,6 +213,11 @@ socket.on('roomUpdate', (room) => {
     list.appendChild(li);
   });
 
+  const MATCH_LABELS = { 1: 'East only (東圈)', 2: 'East + South (東南)', 4: 'Full (東南西北)' };
+  const mr = room.matchRounds || 4;
+  $('match-length').value = String(mr);
+  $('match-length-info').textContent = `Match: ${MATCH_LABELS[mr]}`;
+
   if (isHost) {
     $('btn-start').disabled = room.players.length < 4;
     $('btn-start').textContent = room.players.length < 4 ? `Need 4 players (${room.players.length}/4)` : 'Start Game';
@@ -250,6 +267,7 @@ $('btn-copy-link').addEventListener('click', () => { if (myCode) copyText(`${loc
 
 $('btn-start').addEventListener('click', () => socket.emit('startGame'));
 $('btn-add-bot').addEventListener('click', () => socket.emit('addBot', { difficulty: $('bot-difficulty').value }));
+$('match-length').addEventListener('change', () => socket.emit('setMatchLength', { rounds: Number($('match-length').value) }));
 $('btn-leave').addEventListener('click', () => socket.emit('leaveRoom'));
 
 // ── Chat — handled by the shared module (chat.js / window.MahjongChat) ──

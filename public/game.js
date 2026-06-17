@@ -27,14 +27,19 @@ window.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btn-win').addEventListener('click', () => socket.emit('declareWin'));
   document.getElementById('btn-discard').addEventListener('click', discardSelected);
-  document.getElementById('btn-new-game').addEventListener('click', () => socket.emit('newGame'));
-  document.getElementById('btn-lobby').addEventListener('click', () => { window.location.href = '/'; });
+  document.getElementById('btn-next-hand').addEventListener('click', () => socket.emit('nextHand'));
+  document.getElementById('btn-vote-end').addEventListener('click', toggleEndVote);
+  document.getElementById('btn-lobby').addEventListener('click', () => socket.emit('returnToLobby'));
   MahjongChat.initChat(socket, { glyph: tileGlyph, onAction: e => showActionBubble(e.seat, e.type, e.tiles) });
 });
 
 // ── Socket events ────────────────────────────────────────────────────────────
-socket.on('rejoined', ({ playerIndex, state }) => {
+let amHost = false;     // set on (re)join — gates the host-only "Next Hand" button
+let myEndVote = false;  // this client's current end-match vote
+
+socket.on('rejoined', ({ playerIndex, isHost, state }) => {
   myIndex = playerIndex;
+  amHost = !!isHost;
   const stored = JSON.parse(sessionStorage.getItem('mahjong') || '{}');
   stored.playerIndex = playerIndex;
   sessionStorage.setItem('mahjong', JSON.stringify(stored));
@@ -48,6 +53,9 @@ socket.on('rejoinError', () => {
 
 socket.on('gameUpdate', state => {
   const prevPhase = gameState?.phase;
+  // A fresh game state means a new hand is in progress — clear any game-over overlay.
+  const over = document.getElementById('game-over');
+  if (over && !over.classList.contains('hidden')) { over.classList.add('hidden'); myEndVote = false; }
   gameState = state;
   if (state.playerIndex != null) myIndex = state.playerIndex;
   // Reset response tracking when entering/leaving a claim or rob window
@@ -57,16 +65,36 @@ socket.on('gameUpdate', state => {
 });
 
 socket.on('gameOver', (result) => {
-  const { type, winner, winnerName, discarderName } = result;
+  const { type, winnerName, discarderName } = result;
   if (gameState) { gameState.phase = 'over'; render(); }
   const msg = type === 'draw'   ? 'Draw — no more tiles in the wall.' :
               type === 'tsumo'  ? `${winnerName} wins by self-draw! 🎉` :
                                   `${winnerName} wins by Ron${discarderName ? ' off ' + discarderName : ''}! 🎉`;
+  document.getElementById('game-over-title').textContent = result.matchOver ? '🏁 Match Complete' : 'Hand Over';
   document.getElementById('game-over-msg').textContent = msg;
   renderScoreDetail(result);
+  if (result.matchOver) {
+    showFinalStandings(result.standings);
+    setOverButtons('matchOver');
+  } else {
+    showFinalStandings(null);
+    setOverButtons('betweenHands');
+  }
   document.getElementById('game-over').classList.remove('hidden');
-  document.getElementById('btn-new-game').classList.toggle('hidden', winner === null);
 });
+
+// Match ended early by a unanimous vote — no fresh hand result, just standings.
+socket.on('matchOver', ({ standings }) => {
+  if (gameState) { gameState.phase = 'over'; render(); }
+  document.getElementById('game-over-title').textContent = '🏁 Match Complete';
+  document.getElementById('game-over-msg').textContent = 'Match ended by vote.';
+  document.getElementById('game-over-detail').innerHTML = '';
+  showFinalStandings(standings);
+  setOverButtons('matchOver');
+  document.getElementById('game-over').classList.remove('hidden');
+});
+
+socket.on('endVoteUpdate', ({ voted, needed }) => updateVoteButton(voted, needed));
 
 socket.on('backToLobby', () => { window.location.href = '/'; });
 
@@ -200,7 +228,11 @@ const WIND_EN = { east: 'East', south: 'South', west: 'West', north: 'North' };
 function updateRoundWind(s) {
   const el = document.getElementById('round-wind');
   if (!el) return;
-  el.textContent = s.roundWind ? `Round: ${WIND_CN[s.roundWind]} ${WIND_EN[s.roundWind]}` : '';
+  if (!s.roundWind) { el.textContent = ''; return; }
+  let txt = `${WIND_CN[s.roundWind]} ${WIND_EN[s.roundWind]} Round`;
+  if (s.handNumber) txt += ` · Hand ${s.handNumber}`;
+  if (s.dealerStreak) txt += ` · 連莊 ×${s.dealerStreak}`;
+  el.textContent = txt;
 }
 
 // Build the faan breakdown + payment summary on the game-over screen.
@@ -248,6 +280,56 @@ function renderScoreDetail(result) {
     });
     el.appendChild(tbl);
   }
+}
+
+// ── Match end: standings + the between-hands controls ────────────────────────
+const MEDALS = ['🥇', '🥈', '🥉'];
+
+function setOverButtons(mode) {
+  const next = document.getElementById('btn-next-hand');
+  const vote = document.getElementById('btn-vote-end');
+  const lobby = document.getElementById('btn-lobby');
+  if (mode === 'matchOver') {
+    next.classList.add('hidden');
+    vote.classList.add('hidden');
+    lobby.classList.remove('hidden');
+  } else { // betweenHands
+    next.classList.toggle('hidden', !amHost);
+    vote.classList.remove('hidden');
+    lobby.classList.add('hidden');
+    const humans = (gameState?.players || []).filter(p => !p.isBot).length;
+    updateVoteButton(myEndVote ? 1 : 0, humans);
+  }
+}
+
+function toggleEndVote() {
+  myEndVote = !myEndVote;
+  socket.emit('endMatchVote', { value: myEndVote });
+}
+
+function updateVoteButton(voted, needed) {
+  const btn = document.getElementById('btn-vote-end');
+  if (!btn) return;
+  btn.textContent = `${myEndVote ? '✓ Voted to end' : '🗳 Vote to end match'} (${voted}/${needed})`;
+  btn.classList.toggle('vote-active', myEndVote);
+}
+
+function showFinalStandings(standings) {
+  const el = document.getElementById('final-standings');
+  if (!el) return;
+  if (!standings) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  el.classList.remove('hidden');
+  el.innerHTML = '<div class="standings-title">Final Standings</div>';
+  standings.forEach(s => {
+    const medal = MEDALS[s.rank - 1] || `#${s.rank}`;
+    const row = document.createElement('div');
+    row.className = 'standings-row' + (s.rank === 1 ? ' standings-leader' : '');
+    row.innerHTML =
+      `<span class="st-rank">${medal}</span>` +
+      `<span class="st-name">${s.isBot ? '🤖 ' : ''}${escapeHtml(s.name)}</span>` +
+      `<span class="st-pts ${s.points >= 0 ? 'pay-plus' : 'pay-minus'}">${s.points > 0 ? '+' : ''}${s.points}</span>`;
+    el.appendChild(row);
+  });
 }
 
 // ── Player area ──────────────────────────────────────────────────────────────

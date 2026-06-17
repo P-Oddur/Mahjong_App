@@ -70,6 +70,15 @@ async function main() {
   if (chatMsg.text !== 'gg 🀄' || chatMsg.name !== 'Tester') fail(`bad chat echo: ${JSON.stringify(chatMsg)}`);
   log(`chat echoed: ${chatMsg.name}: ${chatMsg.text}`);
 
+  console.log('3c. Set match length (host)');
+  const mlRoom = await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('no roomUpdate after setMatchLength')), 5000);
+    s1.once('roomUpdate', r => { clearTimeout(t); resolve(r); });
+    s1.emit('setMatchLength', { rounds: 2 });
+  });
+  if (mlRoom.matchRounds !== 2) fail(`match length not applied: ${mlRoom.matchRounds}`);
+  log('match length = 2 rounds');
+
   console.log('4. Start game');
   s1.emit('startGame');
   await once(s1, 'gameStarted');
@@ -113,16 +122,30 @@ async function main() {
   log(`saw ${updates} game updates`);
   log(`game over: ${over.type}${over.winnerName ? ' by ' + over.winnerName : ''}`);
 
-  console.log('8. New game -> back to lobby');
-  s2.emit('newGame');
+  console.log('8. Streamlined next hand (no lobby round-trip)');
+  s2.emit('nextHand');
+  await once(s2, 'gameStarted');
+  const hand2 = await once(s2, 'gameUpdate');
+  if (hand2.handNumber !== 2) fail(`expected hand 2, got ${hand2.handNumber}`);
+  log(`hand ${hand2.handNumber} dealt, prevailing ${hand2.roundWind}`);
+  const over2 = await once(s2, 'gameOver', 120000); // auto-player finishes hand 2
+  if (over2.matchOver) fail('match should not end at hand 2 of a 2-round match');
+
+  console.log('9. Unanimous vote ends the match -> final standings');
+  const matchEnd = once(s2, 'matchOver');
+  s2.emit('endMatchVote', { value: true }); // lone human => unanimous immediately
+  const { standings } = await matchEnd;
+  if (!Array.isArray(standings) || standings.length !== 4) fail('no final standings');
+  if (standings[0].rank !== 1 || standings.some(r => typeof r.points !== 'number')) fail('standings not ranked');
+  log(`standings: ${standings.map(r => `${r.name} ${r.points}`).join(', ')}`);
+
+  console.log('10. Back to lobby resets to a fresh match');
+  const lobbyP = once(s2, 'roomUpdate');
+  s2.emit('returnToLobby');
   await once(s2, 'backToLobby');
-  const lobbyRoom = await new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error('no roomUpdate after newGame')), 5000);
-    s2.emit('requestState');
-    s2.once('roomUpdate', r => { clearTimeout(t); resolve(r); });
-  });
+  const lobbyRoom = await lobbyP;
   if (lobbyRoom.state !== 'waiting') fail('room not back in waiting state');
-  log('back in lobby, winds rotated');
+  log('back in lobby (state waiting)');
 
   console.log('\nALL TESTS PASSED');
   s2.disconnect();
