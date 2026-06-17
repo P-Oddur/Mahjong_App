@@ -182,6 +182,11 @@ function setStatus(text, cls) {
   el.className = `status ${cls}`;
 }
 
+// Escape user-controlled text (player names) before putting it in innerHTML.
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 const WIND_CN = { east: '東', south: '南', west: '西', north: '北' };
 const WIND_EN = { east: 'East', south: 'South', west: 'West', north: 'North' };
 
@@ -231,7 +236,7 @@ function renderScoreDetail(result) {
         : '<span class="pay-zero">·</span>';
       const row = document.createElement('div');
       row.className = 'score-total-row';
-      row.innerHTML = `<span class="st-name">${p.isBot ? '🤖 ' : ''}${p.name}</span>${deltaStr}<span class="score-running">${totals[i]}</span>`;
+      row.innerHTML = `<span class="st-name">${p.isBot ? '🤖 ' : ''}${escapeHtml(p.name)}</span>${deltaStr}<span class="score-running">${totals[i]}</span>`;
       tbl.appendChild(row);
     });
     el.appendChild(tbl);
@@ -254,7 +259,7 @@ function renderArea(position, pIdx, s, isMe) {
   const nameRow = document.createElement('div');
   nameRow.className = 'player-name';
   const windMap = { east:'東', south:'南', west:'西', north:'北' };
-  nameRow.innerHTML = `<span>${p.isBot ? '🤖 ' : ''}${p.name}</span><span class="seat-wind">${windMap[p.seatWind]}</span><span class="player-points" title="Session score">${p.points ?? 0}</span>`;
+  nameRow.innerHTML = `<span>${p.isBot ? '🤖 ' : ''}${escapeHtml(p.name)}</span><span class="seat-wind">${windMap[p.seatWind]}</span><span class="player-points" title="Session score">${p.points ?? 0}</span>`;
   if (isTurn) nameRow.innerHTML += '<span class="turn-indicator">▶</span>';
   if (!isMe) nameRow.innerHTML += `<span class="hand-count">(${p.handCount})</span>`;
   el.appendChild(nameRow);
