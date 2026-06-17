@@ -349,7 +349,7 @@ function renderActions(s) {
     if (selectedTileId !== null) btnDiscard.classList.remove('hidden');
 
     // Self-draw win check
-    if (canWin(me.hand, me.melds)) btnWin.classList.remove('hidden');
+    if (Mahjong.checkWin(me.hand, me.melds)) btnWin.classList.remove('hidden');
 
     // Concealed kong
     const groups = {};
@@ -380,12 +380,12 @@ function renderActions(s) {
   // Claim window — not my discard
   if (s.phase === 'claim' && s.lastDiscardPlayer !== myIndex && !claimResponded && me.hand) {
     const isNext = (s.lastDiscardPlayer + 1) % s.players.length === myIndex;
-    const claims = validClaims(me.hand, me.melds, s.lastDiscard, isNext);
+    const claims = Mahjong.getValidClaims(me.hand, me.melds, s.lastDiscard, isNext);
 
     if (claims.length > 0) {
       claims.forEach(type => {
         if (type === 'chow') {
-          chowOptions(me.hand, s.lastDiscard).forEach(opt => {
+          Mahjong.getChowOptions(me.hand, s.lastDiscard).forEach(opt => {
             const fromHand = opt.filter(t => t !== s.lastDiscard);
             const btn = document.createElement('button');
             btn.className = 'action-btn chow-btn';
@@ -422,7 +422,7 @@ function renderActions(s) {
 
   // Robbing-the-kong window — anyone but the declarer may win on the added tile
   if (s.phase === 'rob' && s.robKong && s.robKong.seat !== myIndex && !claimResponded && me.hand) {
-    if (canWin([...me.hand, s.robKong.tile], me.melds)) {
+    if (Mahjong.checkWin([...me.hand, s.robKong.tile], me.melds)) {
       const btn = document.createElement('button');
       btn.className = 'action-btn win-btn';
       btn.textContent = '🏆 Rob!';
@@ -481,60 +481,8 @@ function discardSelected() {
   selectedTileId = null;
 }
 
-// ── Win / claim logic (client-side mirror) ───────────────────────────────────
-function canWin(hand, melds) {
-  const setsNeeded = 4 - (melds?.length ?? 0);
-  const tiles = (hand || []).filter(t => t.suit !== 'flower');
-  if (tiles.length !== setsNeeded * 3 + 2) return false;
-  return winCheck(sortC(tiles), setsNeeded, false);
-}
-
-function winCheck(tiles, sets, hasPair) {
-  if (!tiles.length) return sets === 0 && hasPair;
-  const t = tiles[0], rest = tiles.slice(1);
-  if (!hasPair) {
-    const i = rest.findIndex(r => r.suit === t.suit && r.value === t.value);
-    if (i !== -1) { const r2 = [...rest]; r2.splice(i, 1); if (winCheck(r2, sets, true)) return true; }
-  }
-  if (!sets) return false;
-  const same = rest.filter(r => r.suit === t.suit && r.value === t.value);
-  if (same.length >= 2) { const r2 = rest.filter(r => r !== same[0] && r !== same[1]); if (winCheck(r2, sets-1, hasPair)) return true; }
-  if (['man','pin','bam'].includes(t.suit)) {
-    const v = t.value;
-    const t2 = rest.find(r => r.suit === t.suit && r.value === v+1);
-    if (t2) { const r2 = rest.filter(r=>r!==t2); const t3 = r2.find(r=>r.suit===t.suit&&r.value===v+2); if(t3){const r3=r2.filter(r=>r!==t3);if(winCheck(r3,sets-1,hasPair))return true;} }
-  }
-  return false;
-}
-
-function validClaims(hand, melds, discard, isNext) {
-  if (!discard) return [];
-  const out = [];
-  if (canWin([...hand, discard], melds)) out.push('win');
-  const m = hand.filter(t => t.suit === discard.suit && t.value === discard.value);
-  if (m.length >= 3) out.push('kong');
-  if (m.length >= 2) out.push('pong');
-  if (isNext && ['man','pin','bam'].includes(discard.suit) && chowOptions(hand, discard).length) out.push('chow');
-  return out;
-}
-
-function chowOptions(hand, discard) {
-  if (!discard || !['man','pin','bam'].includes(discard.suit)) return [];
-  const v = discard.value, s = discard.suit;
-  const f = val => hand.find(t => t.suit === s && t.value === val) ?? null;
-  const opts = [];
-  if (v>=3 && f(v-2) && f(v-1)) opts.push([f(v-2), f(v-1), discard]);
-  if (v>=2 && v<=8 && f(v-1) && f(v+1)) opts.push([f(v-1), discard, f(v+1)]);
-  if (v<=7 && f(v+1) && f(v+2)) opts.push([discard, f(v+1), f(v+2)]);
-  return opts;
-}
-
-function sortC(tiles) {
-  const sr = t => ({ man:0, pin:10, bam:20, wind:30, dragon:40, flower:50 }[t.suit] ?? 60) +
-    (t.suit==='wind' ? ['east','south','west','north'].indexOf(t.value) :
-     t.suit==='dragon' ? ['red','green','white'].indexOf(t.value) : (t.value??0));
-  return [...tiles].sort((a,b) => sr(a)-sr(b));
-}
+// Win/claim button logic uses the shared rules engine (window.Mahjong, served
+// from mahjong.js) — see Mahjong.checkWin / getValidClaims / getChowOptions above.
 
 // ── Chat & action bubbles ─────────────────────────────────────────────────────
 const CHAT_EMOJIS = ['👍','😂','🎉','😮','😢','🔥','👏','🤔','🙏','🀄'];

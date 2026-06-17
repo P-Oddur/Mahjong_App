@@ -134,4 +134,8 @@ function getChowOptions(hand, discardedTile) {
   return opts;
 }
 
-module.exports = { createDeck, shuffle, sortTiles, checkWin, getValidClaims, getChowOptions };
+const Mahjong = { createDeck, shuffle, sortTiles, checkWin, getValidClaims, getChowOptions };
+// Usable both as a Node module (server) and a browser global (client) so the
+// client shares this one authoritative rules engine instead of a hand-copy.
+if (typeof module !== 'undefined' && module.exports) module.exports = Mahjong;
+else if (typeof window !== 'undefined') window.Mahjong = Mahjong;

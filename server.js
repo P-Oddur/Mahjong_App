@@ -12,6 +12,9 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, 'public')));
+// Serve the shared rules engine to the browser; it lives at the project root
+// (required by the server too), not under public/.
+app.get('/mahjong.js', (req, res) => res.sendFile(path.join(__dirname, 'mahjong.js')));
 
 const rooms = {};
 const WINDS = ['east', 'south', 'west', 'north'];
