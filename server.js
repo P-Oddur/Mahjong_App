@@ -77,6 +77,7 @@ function gameStateFor(room, playerIndex) {
     claimDeadline: g.claimDeadline,
     roundWind: WINDS[room.roundWind || 0],
     dealer: room.dealer || 0,
+    robKong: g.robKong ? { seat: g.robKong.seat, tile: g.robKong.tile } : null,
   };
 }
 
@@ -133,6 +134,8 @@ function startGame(room) {
     claims: {},
     passes: new Set(),
     seq: 0,
+    kongReplacement: null, // seat that just drew a kong replacement (for 槓上開花)
+    robKong: null,         // active added-kong rob window (for 搶槓)
   };
   room.state = 'playing';
 
@@ -165,6 +168,8 @@ function advanceTurn(room) {
   g.claimTimeout = null;
   g.claims = {};
   g.passes = new Set();
+  g.kongReplacement = null;
+  g.robKong = null;
   g.phase = 'draw';
   g.currentTurn = (g.lastDiscardPlayer + 1) % room.players.length;
 
@@ -216,7 +221,7 @@ function processClaims(room) {
     p.hand = p.hand.filter(t => !m.includes(t));
     p.melds.push({ type: 'kong', tiles: [...m, g.lastDiscard] });
     g.discardPile.pop();
-    if (g.wall.length > 0) { p.hand.push(g.wall.pop()); drawFlowers(room, pi); }
+    if (g.wall.length > 0) { p.hand.push(g.wall.pop()); drawFlowers(room, pi); g.kongReplacement = pi; }
     g.currentTurn = pi;
     g.phase = 'discard';
     g.lastDiscard = null;
@@ -282,10 +287,17 @@ function winContext(room, winnerIndex, hand, selfDraw) {
     selfDraw,
     flowers: p.flowers,
     lastTile: room.game.wall.length === 0,
+    kongReplacement: selfDraw && room.game.kongReplacement === winnerIndex,
   };
 }
 const ronContext = (room, i) => winContext(room, i, [...room.players[i].hand, room.game.lastDiscard], false);
 const selfDrawContext = (room, i) => winContext(room, i, room.players[i].hand, true);
+// Robbing the kong: winner takes the tile a player just added to an exposed pong.
+function robContext(room, i) {
+  const ctx = winContext(room, i, [...room.players[i].hand, room.game.robKong.tile], false);
+  ctx.robbingKong = true;
+  return ctx;
+}
 
 // End the game on a self-draw, if the hand meets the faan minimum. Returns
 // whether the win was awarded (false = below minimum, keep playing).
@@ -296,6 +308,68 @@ function finishSelfDraw(room, playerIndex) {
   const payments = computePayments(score, playerIndex, room.players.length, true, null, SCORING);
   endGame(room, { type: 'tsumo', winner: playerIndex, winnerName: p.name, score, payments });
   return true;
+}
+
+// ── Added kong (加槓) & robbing the kong (搶槓) ───────────────────────────────
+
+// Open an 8s window in which any other player may win on the tile being added to
+// an exposed pong. (Concealed kongs are NOT robbable.)
+function openRobWindow(room, seat, tile, meldIndex) {
+  const g = room.game;
+  g.phase = 'rob';
+  g.robKong = { seat, tile, meldIndex };
+  g.claims = {};
+  g.passes = new Set();
+  g.claimDeadline = Date.now() + 8000;
+  if (g.claimTimeout) clearTimeout(g.claimTimeout);
+  g.claimTimeout = setTimeout(() => {
+    if (rooms[room.code] === room && room.game === g && g.phase === 'rob') resolveRob(room);
+  }, 8000);
+  broadcast(room);
+}
+
+// Resolve the rob window: award the robber if someone won, else complete the kong.
+function resolveRob(room) {
+  const g = room.game;
+  if (g.claimTimeout) { clearTimeout(g.claimTimeout); g.claimTimeout = null; }
+  if (!g.robKong) return;
+  const { seat: declarer, tile, meldIndex } = g.robKong;
+
+  // Among everyone who can rob, the player nearest the declarer (in turn order) wins.
+  const robEntries = Object.entries(g.claims).filter(([, c]) => c.type === 'win');
+  if (robEntries.length) {
+    const n = room.players.length;
+    robEntries.sort(([a], [b]) =>
+      ((+a - declarer - 1 + n) % n) - ((+b - declarer - 1 + n) % n));
+    const [robKey, robClaim] = robEntries[0];
+    const pi = parseInt(robKey);
+    const robber = room.players[pi];
+    const score = robClaim.score || scoreWin(robContext(room, pi), SCORING);
+    // Move the added tile from the declarer to the robber.
+    room.players[declarer].hand = room.players[declarer].hand.filter(t => t.id !== tile.id);
+    robber.hand.push(tile);
+    const payments = computePayments(score, pi, room.players.length, false, declarer, SCORING);
+    g.robKong = null;
+    endGame(room, {
+      type: 'ron', winner: pi, winnerName: robber.name, score, payments,
+      discarder: declarer, discarderName: room.players[declarer].name, robbed: true,
+    });
+    return;
+  }
+
+  // Nobody robbed — complete the added kong and draw a replacement.
+  const p = room.players[declarer];
+  p.hand = p.hand.filter(t => t.id !== tile.id);
+  const meld = p.melds[meldIndex];
+  meld.type = 'kong';
+  meld.tiles = [...meld.tiles, tile];
+  g.robKong = null;
+  g.claims = {};
+  g.passes = new Set();
+  g.phase = 'discard';
+  g.currentTurn = declarer;
+  if (g.wall.length > 0) { p.hand.push(g.wall.pop()); drawFlowers(room, declarer); g.kongReplacement = declarer; }
+  broadcast(room);
 }
 
 // ── Shared actions (used by both sockets and bots) ──────────────────────────
@@ -310,6 +384,7 @@ function doDiscard(room, playerIndex, tileId) {
   if (idx === -1) return;
 
   const tile = p.hand.splice(idx, 1)[0];
+  g.kongReplacement = null; // discarding ends any pending kong-replacement win
   g.discardPile.push(tile);
   g.lastDiscard = tile;
   g.lastDiscardPlayer = playerIndex;
@@ -329,6 +404,23 @@ function doDiscard(room, playerIndex, tileId) {
 function registerClaim(room, playerIndex, type, tileIds) {
   const g = room.game;
   if (!g || room.state !== 'playing') return;
+
+  // Robbing-the-kong window: only a winning claim on the added-kong tile counts.
+  if (g.phase === 'rob') {
+    if (type !== 'win' || !g.robKong || playerIndex === g.robKong.seat) return;
+    const p = room.players[playerIndex];
+    if (!checkWin([...p.hand, g.robKong.tile], p.melds)) return;
+    const score = scoreWin(robContext(room, playerIndex), SCORING);
+    if (score.faan < SCORING.minFaan) {
+      if (p.socketId) io.to(p.socketId).emit('actionError', `Not enough faan to rob (${score.faan}/${SCORING.minFaan}).`);
+      registerPass(room, playerIndex); // treat as a pass so the rob window can resolve
+      return;
+    }
+    g.claims[playerIndex] = { type: 'win', score };
+    checkAllRespondedRob(room); // collect every response, then resolveRob picks by seat priority
+    return;
+  }
+
   if (g.phase !== 'claim' || playerIndex === g.lastDiscardPlayer) return;
 
   const p = room.players[playerIndex];
@@ -354,6 +446,14 @@ function registerClaim(room, playerIndex, type, tileIds) {
 function registerPass(room, playerIndex) {
   const g = room.game;
   if (!g || room.state !== 'playing') return;
+
+  if (g.phase === 'rob') {
+    if (!g.robKong || playerIndex === g.robKong.seat) return;
+    g.passes.add(playerIndex);
+    checkAllRespondedRob(room);
+    return;
+  }
+
   if (g.phase !== 'claim' || playerIndex === g.lastDiscardPlayer) return;
 
   g.passes.add(playerIndex);
@@ -368,6 +468,16 @@ function checkAllResponded(room) {
   if (allOthers.every(i => responded.has(i))) {
     processClaims(room);
   }
+}
+
+// Same as checkAllResponded, but for the robbing-the-kong window.
+function checkAllRespondedRob(room) {
+  const g = room.game;
+  if (!g.robKong) return;
+  const n = room.players.length;
+  const responded = new Set([...Object.keys(g.claims).map(Number), ...g.passes]);
+  const others = Array.from({ length: n }, (_, i) => i).filter(i => i !== g.robKong.seat);
+  if (others.every(i => responded.has(i))) resolveRob(room);
 }
 
 // ── Bots ─────────────────────────────────────────────────────────────────────
@@ -396,6 +506,15 @@ function scheduleBots(room) {
         botRespondClaim(room, i);
       }, BOT_DELAY * 0.6 + Math.random() * BOT_DELAY * 0.8);
     });
+  } else if (g.phase === 'rob') {
+    room.players.forEach((p, i) => {
+      if (!p.isBot || !g.robKong || i === g.robKong.seat) return;
+      if (g.claims[i] !== undefined || g.passes.has(i)) return;
+      setTimeout(() => {
+        if (!stillCurrent() || g.phase !== 'rob') return;
+        botRespondRob(room, i);
+      }, BOT_DELAY * 0.6 + Math.random() * BOT_DELAY * 0.8);
+    });
   }
 }
 
@@ -412,6 +531,7 @@ function botTakeTurn(room, playerIndex) {
     p.melds.push({ type: 'concealed-kong', tiles: four });
     p.hand.push(g.wall.pop());
     drawFlowers(room, playerIndex);
+    g.kongReplacement = playerIndex;
     broadcast(room); // re-schedules this bot to act again
     return;
   }
@@ -427,6 +547,16 @@ function botRespondClaim(room, playerIndex) {
   const decision = decideClaim(p.hand, p.melds, g.lastDiscard, isNext);
   if (decision) registerClaim(room, playerIndex, decision.type, decision.tileIds);
   else registerPass(room, playerIndex);
+}
+
+function botRespondRob(room, playerIndex) {
+  const g = room.game;
+  const p = room.players[playerIndex];
+  if (g.robKong && checkWin([...p.hand, g.robKong.tile], p.melds)) {
+    registerClaim(room, playerIndex, 'win');
+  } else {
+    registerPass(room, playerIndex);
+  }
 }
 
 // ── Room membership helpers ──────────────────────────────────────────────────
@@ -621,8 +751,27 @@ io.on('connection', (socket) => {
 
     p.hand = p.hand.filter(t => !matching.includes(t));
     p.melds.push({ type: 'concealed-kong', tiles: matching.slice(0, 4) });
-    if (g.wall.length > 0) { p.hand.push(g.wall.pop()); drawFlowers(room, playerIndex); }
+    if (g.wall.length > 0) { p.hand.push(g.wall.pop()); drawFlowers(room, playerIndex); g.kongReplacement = playerIndex; }
     broadcast(room);
+  });
+
+  // Upgrade an exposed pong to a kong (加槓) — opens a robbing window first.
+  socket.on('declareAddedKong', ({ tileId }) => {
+    const { code, playerIndex } = socket.data || {};
+    const room = rooms[code];
+    if (!room || !room.game) return;
+    const g = room.game;
+    if (g.phase !== 'discard' || g.currentTurn !== playerIndex) return;
+    if (g.wall.length === 0) return; // no replacement tile available — kong not allowed
+
+    const p = room.players[playerIndex];
+    const tile = p.hand.find(t => t.id === tileId);
+    if (!tile) return;
+    const meldIndex = p.melds.findIndex(m =>
+      m.type === 'pong' && m.tiles[0].suit === tile.suit && m.tiles[0].value === tile.value);
+    if (meldIndex === -1) return;
+
+    openRobWindow(room, playerIndex, tile, meldIndex);
   });
 
   socket.on('requestState', () => {
