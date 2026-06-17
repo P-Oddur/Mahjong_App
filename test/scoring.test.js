@@ -88,5 +88,14 @@ check('payments: self-draw vs discard', () => {
   assert.deepStrictEqual(ron, [0, 8, 0, -8]);
 });
 
+// 9. Two limit patterns must not stack: 大四喜 (big four winds) + 字一色 (all honours) = the cap, not 2× it.
+check('limit hands do not stack', () => {
+  const hand = [...trip('wind', 'east'), ...trip('wind', 'south'), ...trip('wind', 'west'), ...trip('wind', 'north'), ...pair('dragon', 'red')];
+  const s = scoreWin({ hand, melds: [], seatWind: 'east', roundWind: 'east', selfDraw: false }, cfg);
+  assert.strictEqual(s.faan, 13, `got ${s.faan}`);
+  assert.strictEqual(s.rawFaan, 13, `rawFaan should not stack, got ${s.rawFaan}`);
+  assert.ok(s.isLimit && ids(s).includes('big-four-winds') && ids(s).includes('all-honors'));
+});
+
 console.log(`\n${passed} scoring tests passed`);
 if (process.exitCode) { console.error('SCORING TESTS FAILED'); }

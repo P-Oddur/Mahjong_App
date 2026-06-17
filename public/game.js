@@ -218,7 +218,7 @@ function renderScoreDetail(result) {
       score.breakdown.forEach(b => {
         const cnt = b.count ? ` ×${b.count}` : '';
         const li = document.createElement('li');
-        li.innerHTML = `<span>${b.name}${cnt} <span class="score-cn">${b.cn}</span></span><span class="score-b-faan">+${b.faan}</span>`;
+        li.innerHTML = `<span>${b.name}${cnt} <span class="score-cn">${b.cn}</span></span><span class="score-b-faan">${b.limit ? 'LIMIT' : '+' + b.faan}</span>`;
         ul.appendChild(li);
       });
       el.appendChild(ul);

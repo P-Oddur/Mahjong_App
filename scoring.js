@@ -190,14 +190,15 @@ function scoreDecomposition(ctx, d, cfg) {
     const v = p.evaluate(ctx, d);
     if (!v) continue;
     if (p.limit) {
-      isLimit = true;
-      faan += cfg.limitFaan;
-      breakdown.push({ id: p.id, name: p.name, cn: p.cn, faan: cfg.limitFaan, limit: true });
+      isLimit = true; // marked here; the total is set to the cap below (limit hands never stack)
+      breakdown.push({ id: p.id, name: p.name, cn: p.cn, limit: true });
     } else {
       faan += v;
       breakdown.push({ id: p.id, name: p.name, cn: p.cn, faan: v, count: p.perCount && v > 1 ? v : undefined });
     }
   }
+  // A limit hand is worth exactly the cap regardless of how many limit patterns it matches.
+  if (isLimit) faan = cfg.limitFaan;
   return { faan, isLimit, breakdown };
 }
 

@@ -173,8 +173,8 @@ socket.on('roomUpdate', (room) => {
   });
 
   if (isHost) {
-    $('btn-start').disabled = room.players.length < 2;
-    $('btn-start').textContent = room.players.length < 2 ? 'Waiting for players...' : `Start Game (${room.players.length} players)`;
+    $('btn-start').disabled = room.players.length < 4;
+    $('btn-start').textContent = room.players.length < 4 ? `Need 4 players (${room.players.length}/4)` : 'Start Game';
     $('btn-add-bot').classList.toggle('hidden', room.players.length >= 4);
   }
 });

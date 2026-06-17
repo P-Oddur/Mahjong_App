@@ -187,12 +187,17 @@ function processClaims(room) {
 
   const entries = Object.entries(g.claims);
 
-  // Win > kong > pong > chow
-  const win = entries.find(([, c]) => c.type === 'win');
-  if (win) {
-    const pi = parseInt(win[0]);
+  // Win > kong > pong > chow. Multiple players can ron the same discard; the one
+  // nearest the discarder in turn order takes it.
+  const winEntries = entries.filter(([, c]) => c.type === 'win');
+  if (winEntries.length) {
+    const n = room.players.length;
+    winEntries.sort(([a], [b]) =>
+      ((+a - g.lastDiscardPlayer - 1 + n) % n) - ((+b - g.lastDiscardPlayer - 1 + n) % n));
+    const [winKey, winClaim] = winEntries[0];
+    const pi = parseInt(winKey);
     const p = room.players[pi];
-    const score = win[1].score || scoreWin(ronContext(room, pi), SCORING);
+    const score = winClaim.score || scoreWin(ronContext(room, pi), SCORING);
     p.hand.push(g.lastDiscard);
     g.discardPile.pop();
     const payments = computePayments(score, pi, room.players.length, false, g.lastDiscardPlayer, SCORING);
@@ -335,6 +340,7 @@ function registerClaim(room, playerIndex, type, tileIds) {
     const score = scoreWin(ronContext(room, playerIndex), SCORING);
     if (score.faan < SCORING.minFaan) {
       if (p.socketId) io.to(p.socketId).emit('actionError', `Not enough faan to win (${score.faan}/${SCORING.minFaan}).`);
+      registerPass(room, playerIndex); // treat a below-minimum win attempt as a pass so the window still resolves
       return;
     }
     g.claims[playerIndex] = { type, tileIds: [], score };
@@ -562,7 +568,7 @@ io.on('connection', (socket) => {
     const { code, playerIndex } = socket.data || {};
     const room = rooms[code];
     if (!room || playerIndex !== 0 || room.state !== 'waiting') return;
-    if (room.players.length < 2) return socket.emit('error', 'Need at least 2 players (add a bot!)');
+    if (room.players.length < 4) return socket.emit('error', 'Need 4 players — add bots to fill the table');
     startGame(room);
   });
 
