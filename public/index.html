@@ -81,6 +81,8 @@ let myToken = null;
 let isHost = false;
 
 const $ = id => document.getElementById(id);
+// Escape user-controlled text (player names) before putting it in innerHTML.
+const escapeHtml = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function showError(msg) { $('error-msg').textContent = msg; }
 function showLobbyError(msg) { $('lobby-error').textContent = msg; }
@@ -180,7 +182,7 @@ socket.on('roomUpdate', (room) => {
   room.players.forEach((p, i) => {
     const li = document.createElement('li');
     li.innerHTML = `
-      <span>${p.isBot ? '🤖 ' : ''}${p.name}</span>
+      <span>${p.isBot ? '🤖 ' : ''}${escapeHtml(p.name)}</span>
       <span class="player-wind-badge">${winds[p.seatWind] || p.seatWind}</span>
       ${p.isBot ? `<span class="player-wind-badge" style="color:${diffColor[p.difficulty] || '#fff'};text-transform:capitalize">${p.difficulty || 'normal'}</span>` : ''}
       ${i === 0 ? '<span class="host-badge">HOST</span>' : ''}

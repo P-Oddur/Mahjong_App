@@ -177,6 +177,11 @@ function setStatus(text, cls) {
   el.className = `status ${cls}`;
 }
 
+// Escape user-controlled text (player names) before putting it in innerHTML.
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 // ── Player area ──────────────────────────────────────────────────────────────
 function renderArea(position, pIdx, s, isMe) {
   const el = document.getElementById(`player-${position}`);
@@ -193,7 +198,7 @@ function renderArea(position, pIdx, s, isMe) {
   const nameRow = document.createElement('div');
   nameRow.className = 'player-name';
   const windMap = { east:'東', south:'南', west:'西', north:'北' };
-  nameRow.innerHTML = `<span>${p.isBot ? '🤖 ' : ''}${p.name}</span><span class="seat-wind">${windMap[p.seatWind]}</span>`;
+  nameRow.innerHTML = `<span>${p.isBot ? '🤖 ' : ''}${escapeHtml(p.name)}</span><span class="seat-wind">${windMap[p.seatWind]}</span>`;
   if (isTurn) nameRow.innerHTML += '<span class="turn-indicator">▶</span>';
   if (!isMe) nameRow.innerHTML += `<span class="hand-count">(${p.handCount})</span>`;
   el.appendChild(nameRow);
