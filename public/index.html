@@ -36,15 +36,38 @@
     <div class="lobby-title" style="font-size:1.5rem;margin-bottom:4px">Room</div>
     <div class="room-code-display" id="room-code-display">----</div>
     <div class="room-code-hint">Share this code with friends</div>
+    <div class="btn-row" style="margin-bottom:6px">
+      <button class="btn btn-secondary" id="btn-copy-code">📋 Copy Code</button>
+      <button class="btn btn-secondary" id="btn-copy-link">🔗 Copy Link</button>
+    </div>
+    <div id="copy-confirm" class="hidden" style="color:#4caf50;font-size:0.82rem;font-weight:600;min-height:18px;margin-bottom:10px">Copied to clipboard!</div>
 
     <ul class="players-list" id="players-list"></ul>
 
     <div id="lobby-actions">
-      <button class="btn btn-secondary hidden" id="btn-add-bot" style="width:100%;margin-bottom:10px">🤖 Add Bot</button>
+      <div id="add-bot-row" class="hidden" style="display:flex;gap:8px;margin-bottom:10px">
+        <select id="bot-difficulty" title="New bot difficulty"
+                style="flex:0 0 auto;padding:10px;border-radius:8px;border:2px solid rgba(255,255,255,0.3);background:rgba(0,0,0,0.4);color:#fff;font-weight:700;cursor:pointer;outline:none">
+          <option value="easy">Easy</option>
+          <option value="normal" selected>Normal</option>
+          <option value="hard">Hard</option>
+        </select>
+        <button class="btn btn-secondary" id="btn-add-bot" style="flex:1">🤖 Add Bot</button>
+      </div>
       <button class="btn btn-primary hidden" id="btn-start" style="width:100%">Start Game</button>
       <div class="waiting-hint hidden" id="waiting-hint">Waiting for host to start...</div>
       <button class="btn btn-ghost" id="btn-leave" style="width:100%;margin-top:10px">Leave Room</button>
     </div>
+
+    <div class="chat-panel" id="lobby-chat">
+      <div class="chat-log" id="chat-log"></div>
+      <div class="emoji-bar" id="emoji-bar"></div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" maxlength="200" placeholder="Say something…" autocomplete="off">
+        <button class="btn btn-secondary" id="chat-send" style="flex:0 0 auto;padding:8px 14px">Send</button>
+      </div>
+    </div>
+
     <div class="error-msg" id="lobby-error"></div>
   </div>
 </div>
@@ -76,7 +99,7 @@ function showLobby() {
 
 function updateHostControls() {
   $('btn-start').classList.toggle('hidden', !isHost);
-  $('btn-add-bot').classList.toggle('hidden', !isHost);
+  $('add-bot-row').classList.toggle('hidden', !isHost);
   $('waiting-hint').classList.toggle('hidden', isHost);
 }
 
@@ -151,6 +174,7 @@ socket.on('error', msg => { const m = typeof msg === 'string' ? msg : msg.msg; s
 
 socket.on('roomUpdate', (room) => {
   const winds = { east:'東', south:'南', west:'西', north:'北' };
+  const diffColor = { easy: '#4caf50', normal: '#f0c040', hard: '#ff6b6b' };
   const list = $('players-list');
   list.innerHTML = '';
   room.players.forEach((p, i) => {
@@ -158,6 +182,7 @@ socket.on('roomUpdate', (room) => {
     li.innerHTML = `
       <span>${p.isBot ? '🤖 ' : ''}${p.name}</span>
       <span class="player-wind-badge">${winds[p.seatWind] || p.seatWind}</span>
+      ${p.isBot ? `<span class="player-wind-badge" style="color:${diffColor[p.difficulty] || '#fff'};text-transform:capitalize">${p.difficulty || 'normal'}</span>` : ''}
       ${i === 0 ? '<span class="host-badge">HOST</span>' : ''}
       ${!p.isBot && !p.connected ? '<span style="opacity:0.5;font-size:0.75rem">disconnected</span>' : ''}
     `;
@@ -175,7 +200,7 @@ socket.on('roomUpdate', (room) => {
   if (isHost) {
     $('btn-start').disabled = room.players.length < 2;
     $('btn-start').textContent = room.players.length < 2 ? 'Waiting for players...' : `Start Game (${room.players.length} players)`;
-    $('btn-add-bot').classList.toggle('hidden', room.players.length >= 4);
+    $('add-bot-row').classList.toggle('hidden', room.players.length >= 4);
   }
 });
 
@@ -189,9 +214,92 @@ socket.on('leftRoom', () => {
   window.location.reload();
 });
 
+// ── Share / invite link ───────────────────────────────────────────────────
+// Pre-fill the join code from an invite link like  http://host:3000/?code=ABCD
+const inviteCode = new URLSearchParams(location.search).get('code');
+if (inviteCode) {
+  $('room-code-input').value = inviteCode.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+  $('player-name').focus();
+}
+
+function flashCopied() {
+  const el = $('copy-confirm');
+  el.classList.remove('hidden');
+  clearTimeout(flashCopied._t);
+  flashCopied._t = setTimeout(() => el.classList.add('hidden'), 1500);
+}
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    // Fallback for non-secure contexts (e.g. plain http on a LAN IP)
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch {}
+    document.body.removeChild(ta);
+  }
+  flashCopied();
+}
+$('btn-copy-code').addEventListener('click', () => { if (myCode) copyText(myCode); });
+$('btn-copy-link').addEventListener('click', () => { if (myCode) copyText(`${location.origin}/?code=${myCode}`); });
+
 $('btn-start').addEventListener('click', () => socket.emit('startGame'));
-$('btn-add-bot').addEventListener('click', () => socket.emit('addBot'));
+$('btn-add-bot').addEventListener('click', () => socket.emit('addBot', { difficulty: $('bot-difficulty').value }));
 $('btn-leave').addEventListener('click', () => socket.emit('leaveRoom'));
+
+// ── Chat (lobby) ─────────────────────────────────────────────────────────────
+const CHAT_EMOJIS = ['👍','😂','🎉','😮','😢','🔥','👏','🤔','🙏','🀄'];
+const ACTION_LABELS = { pong: 'Pong 碰', kong: 'Kong 槓', chow: 'Chow 上' };
+
+function chatLineEl(entry) {
+  const div = document.createElement('div');
+  if (entry.kind === 'action') {
+    div.className = 'chat-msg chat-action';
+    div.textContent = `${entry.name}: ${ACTION_LABELS[entry.type] || entry.type}`;
+  } else {
+    div.className = 'chat-msg';
+    const nm = document.createElement('span');
+    nm.className = 'chat-name';
+    nm.textContent = entry.name + ': ';
+    const tx = document.createElement('span');
+    tx.textContent = entry.text; // textContent → no HTML injection from chat
+    div.append(nm, tx);
+  }
+  return div;
+}
+function appendChat(entry) {
+  const log = $('chat-log');
+  log.appendChild(chatLineEl(entry));
+  log.scrollTop = log.scrollHeight;
+}
+function sendChat() {
+  const v = $('chat-input').value;
+  if (v.trim()) socket.emit('chat', { text: v });
+  $('chat-input').value = '';
+}
+
+(function initChat() {
+  const bar = $('emoji-bar');
+  CHAT_EMOJIS.forEach(e => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'emoji-btn';
+    b.textContent = e;
+    b.addEventListener('click', () => socket.emit('chat', { text: e }));
+    bar.appendChild(b);
+  });
+  $('chat-send').addEventListener('click', sendChat);
+  $('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+})();
+
+socket.on('chatHistory', (msgs) => {
+  const log = $('chat-log');
+  log.innerHTML = '';
+  (msgs || []).forEach(appendChat);
+});
+socket.on('chatMessage', appendChat);
+socket.on('playerAction', appendChat);
 </script>
 </body>
 </html>

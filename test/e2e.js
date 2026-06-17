@@ -54,12 +54,21 @@ async function main() {
   console.log('2. Add 3 bots');
   const room = await waitForPlayers(s1, 4, () => { for (let i = 0; i < 3; i++) s1.emit('addBot'); });
   if (room.players.filter(p => p.isBot).length !== 3) fail('expected 3 bots');
+  if (!room.players.filter(p => p.isBot).every(p => p.difficulty === 'normal')) fail('bots should default to normal difficulty');
   log(`players: ${room.players.map(p => p.name).join(', ')}`);
 
-  console.log('3. Remove a bot, re-add (host controls)');
+  console.log('3. Remove a bot, re-add with a difficulty (host controls)');
   await waitForPlayers(s1, 3, () => s1.emit('removeBot', { index: 3 }));
-  await waitForPlayers(s1, 4, () => s1.emit('addBot'));
-  log('remove/re-add ok');
+  const readded = await waitForPlayers(s1, 4, () => s1.emit('addBot', { difficulty: 'hard' }));
+  if (readded.players[3].difficulty !== 'hard') fail('bot difficulty not applied');
+  log('remove/re-add ok, difficulty applied');
+
+  console.log('3b. Chat round-trip');
+  const chatEcho = once(s1, 'chatMessage');
+  s1.emit('chat', { text: 'gg 🀄' });
+  const chatMsg = await chatEcho;
+  if (chatMsg.text !== 'gg 🀄' || chatMsg.name !== 'Tester') fail(`bad chat echo: ${JSON.stringify(chatMsg)}`);
+  log(`chat echoed: ${chatMsg.name}: ${chatMsg.text}`);
 
   console.log('4. Start game');
   s1.emit('startGame');

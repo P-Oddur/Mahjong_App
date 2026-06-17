@@ -36,6 +36,7 @@ function publicRoom(room) {
       seatWind: p.seatWind,
       connected: p.connected,
       isBot: !!p.isBot,
+      difficulty: p.isBot ? (p.difficulty || 'normal') : null,
     })),
   };
 }
@@ -74,6 +75,25 @@ function broadcast(room) {
     }
   });
   scheduleBots(room);
+}
+
+// ── Chat & action feed ───────────────────────────────────────────────────────
+
+const CHAT_HISTORY = 50; // messages kept per room (in memory)
+
+function pushChat(room, entry) {
+  if (!room.chat) room.chat = [];
+  room.chat.push(entry);
+  if (room.chat.length > CHAT_HISTORY) room.chat.splice(0, room.chat.length - CHAT_HISTORY);
+}
+
+// Announce a claimed meld (pong / kong / chow) to everyone — shown as a chat
+// bubble over the actor's seat and logged in the chat feed. Discards, passes,
+// wins and concealed kongs are intentionally NOT announced.
+function announceAction(room, seat, type, tiles) {
+  const entry = { kind: 'action', seat, name: room.players[seat].name, type, tiles };
+  pushChat(room, entry);
+  io.to(room.code).emit('playerAction', entry);
 }
 
 function drawFlowers(room, playerIndex) {
@@ -179,6 +199,7 @@ function processClaims(room) {
     const m = p.hand.filter(t => t.suit === g.lastDiscard.suit && t.value === g.lastDiscard.value).slice(0, 3);
     p.hand = p.hand.filter(t => !m.includes(t));
     p.melds.push({ type: 'kong', tiles: [...m, g.lastDiscard] });
+    announceAction(room, pi, 'kong', [...m, g.lastDiscard]);
     g.discardPile.pop();
     if (g.wall.length > 0) { p.hand.push(g.wall.pop()); drawFlowers(room, pi); }
     g.currentTurn = pi;
@@ -197,6 +218,7 @@ function processClaims(room) {
     const m = p.hand.filter(t => t.suit === g.lastDiscard.suit && t.value === g.lastDiscard.value).slice(0, 2);
     p.hand = p.hand.filter(t => !m.includes(t));
     p.melds.push({ type: 'pong', tiles: [...m, g.lastDiscard] });
+    announceAction(room, pi, 'pong', [...m, g.lastDiscard]);
     g.discardPile.pop();
     g.currentTurn = pi;
     g.phase = 'discard';
@@ -218,6 +240,7 @@ function processClaims(room) {
       if (handTiles.length === 2) {
         p.hand = p.hand.filter(t => !handTiles.includes(t));
         p.melds.push({ type: 'chow', tiles: [...handTiles, g.lastDiscard] });
+        announceAction(room, pi, 'chow', [...handTiles, g.lastDiscard]);
         g.discardPile.pop();
         g.currentTurn = pi;
         g.phase = 'discard';
@@ -348,7 +371,7 @@ function botTakeTurn(room, playerIndex) {
     return;
   }
 
-  const tile = chooseDiscard(p.hand);
+  const tile = chooseDiscard(p.hand, p.difficulty, g.discardPile);
   if (tile) doDiscard(room, playerIndex, tile.id);
 }
 
@@ -356,7 +379,7 @@ function botRespondClaim(room, playerIndex) {
   const g = room.game;
   const p = room.players[playerIndex];
   const isNext = (g.lastDiscardPlayer + 1) % room.players.length === playerIndex;
-  const decision = decideClaim(p.hand, p.melds, g.lastDiscard, isNext);
+  const decision = decideClaim(p.hand, p.melds, g.lastDiscard, isNext, p.difficulty);
   if (decision) registerClaim(room, playerIndex, decision.type, decision.tileIds);
   else registerPass(room, playerIndex);
 }
@@ -394,7 +417,7 @@ io.on('connection', (socket) => {
 
     const token = genToken();
     const player = { socketId: socket.id, token, name: (playerName || 'Player').trim().slice(0, 20) || 'Player', seatWind: 'east', hand: [], melds: [], flowers: [], connected: true, isBot: false };
-    rooms[code] = { code, players: [player], state: 'waiting', game: null, cleanupTimer: null };
+    rooms[code] = { code, players: [player], state: 'waiting', game: null, cleanupTimer: null, chat: [] };
     socket.join(code);
     socket.data = { code, playerIndex: 0 };
     socket.emit('roomCreated', { code, playerIndex: 0, token });
@@ -415,6 +438,7 @@ io.on('connection', (socket) => {
     socket.join(c);
     socket.data = { code: c, playerIndex };
     socket.emit('roomJoined', { code: c, playerIndex, token });
+    socket.emit('chatHistory', room.chat);
     io.to(c).emit('roomUpdate', publicRoom(room));
   });
 
@@ -433,18 +457,20 @@ io.on('connection', (socket) => {
     socket.join(c);
     socket.data = { code: c, playerIndex };
     socket.emit('rejoined', { code: c, playerIndex, isHost: playerIndex === 0, state: room.state });
+    socket.emit('chatHistory', room.chat);
     io.to(c).emit('roomUpdate', publicRoom(room));
     if (room.game) socket.emit('gameUpdate', gameStateFor(room, playerIndex));
   });
 
-  socket.on('addBot', () => {
+  socket.on('addBot', ({ difficulty } = {}) => {
     const { code, playerIndex } = socket.data || {};
     const room = rooms[code];
     if (!room || playerIndex !== 0 || room.state !== 'waiting') return;
     if (room.players.length >= 4) return socket.emit('error', 'Room is full');
 
+    const level = ['easy', 'normal', 'hard'].includes(difficulty) ? difficulty : 'normal';
     const name = pickBotName(room.players.map(p => p.name));
-    room.players.push({ socketId: null, token: null, name, seatWind: WINDS[room.players.length], hand: [], melds: [], flowers: [], connected: true, isBot: true });
+    room.players.push({ socketId: null, token: null, name, seatWind: WINDS[room.players.length], hand: [], melds: [], flowers: [], connected: true, isBot: true, difficulty: level });
     io.to(code).emit('roomUpdate', publicRoom(room));
   });
 
@@ -513,6 +539,17 @@ io.on('connection', (socket) => {
     registerPass(room, playerIndex);
   });
 
+  socket.on('chat', ({ text } = {}) => {
+    const { code, playerIndex } = socket.data || {};
+    const room = rooms[code];
+    if (!room || playerIndex === undefined || !room.players[playerIndex]) return;
+    const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    if (!clean) return;
+    const entry = { kind: 'chat', seat: playerIndex, name: room.players[playerIndex].name, text: clean };
+    pushChat(room, entry);
+    io.to(code).emit('chatMessage', entry);
+  });
+
   socket.on('declareWin', () => {
     const { code, playerIndex } = socket.data || {};
     const room = rooms[code];
@@ -550,6 +587,7 @@ io.on('connection', (socket) => {
     const room = rooms[code];
     if (room && playerIndex !== undefined) {
       socket.emit('roomUpdate', publicRoom(room));
+      socket.emit('chatHistory', room.chat);
       if (room.game) socket.emit('gameUpdate', gameStateFor(room, playerIndex));
     }
   });
