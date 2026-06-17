@@ -44,6 +44,21 @@
   </div>
 </div>
 
+<!-- Floating layer for action bubbles over seats (never cleared by render) -->
+<div id="bubble-layer"></div>
+
+<div id="chat-widget" class="chat-widget collapsed">
+  <div class="chat-panel" id="chat-body">
+    <div class="chat-log" id="chat-log"></div>
+    <div class="emoji-bar" id="emoji-bar"></div>
+    <div class="chat-input-row">
+      <input type="text" id="chat-input" maxlength="200" placeholder="Say something…" autocomplete="off">
+      <button class="btn btn-secondary" id="chat-send" style="flex:0 0 auto;padding:8px 12px">Send</button>
+    </div>
+  </div>
+  <button id="chat-toggle" class="chat-toggle">💬 Chat</button>
+</div>
+
 <div id="game-over" class="hidden">
   <div id="game-over-card">
     <h2>Game Over</h2>

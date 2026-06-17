@@ -1,8 +1,9 @@
 # Dependencies (restored by `npm install`)
 node_modules/
 
-# Local Claude Code settings (machine-specific)
+# Local Claude Code settings / instructions (machine-specific)
 .claude/settings.local.json
+CLAUDE.md
 
 # Logs and OS cruft
 *.log
