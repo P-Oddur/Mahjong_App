@@ -330,11 +330,16 @@ function resolveRob(room) {
   if (!g.robKong) return;
   const { seat: declarer, tile, meldIndex } = g.robKong;
 
-  const robEntry = Object.entries(g.claims).find(([, c]) => c.type === 'win');
-  if (robEntry) {
-    const pi = parseInt(robEntry[0]);
+  // Among everyone who can rob, the player nearest the declarer (in turn order) wins.
+  const robEntries = Object.entries(g.claims).filter(([, c]) => c.type === 'win');
+  if (robEntries.length) {
+    const n = room.players.length;
+    robEntries.sort(([a], [b]) =>
+      ((+a - declarer - 1 + n) % n) - ((+b - declarer - 1 + n) % n));
+    const [robKey, robClaim] = robEntries[0];
+    const pi = parseInt(robKey);
     const robber = room.players[pi];
-    const score = robEntry[1].score || scoreWin(robContext(room, pi), SCORING);
+    const score = robClaim.score || scoreWin(robContext(room, pi), SCORING);
     // Move the added tile from the declarer to the robber.
     room.players[declarer].hand = room.players[declarer].hand.filter(t => t.id !== tile.id);
     robber.hand.push(tile);
@@ -403,10 +408,11 @@ function registerClaim(room, playerIndex, type, tileIds) {
     const score = scoreWin(robContext(room, playerIndex), SCORING);
     if (score.faan < SCORING.minFaan) {
       if (p.socketId) io.to(p.socketId).emit('actionError', `Not enough faan to rob (${score.faan}/${SCORING.minFaan}).`);
+      registerPass(room, playerIndex); // treat as a pass so the rob window can resolve
       return;
     }
     g.claims[playerIndex] = { type: 'win', score };
-    resolveRob(room);
+    checkAllRespondedRob(room); // collect every response, then resolveRob picks by seat priority
     return;
   }
 
