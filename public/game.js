@@ -29,7 +29,7 @@ window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-discard').addEventListener('click', discardSelected);
   document.getElementById('btn-new-game').addEventListener('click', () => socket.emit('newGame'));
   document.getElementById('btn-lobby').addEventListener('click', () => { window.location.href = '/'; });
-  initChat();
+  MahjongChat.initChat(socket, { glyph: tileGlyph, onAction: e => showActionBubble(e.seat, e.type, e.tiles) });
 });
 
 // ── Socket events ────────────────────────────────────────────────────────────
@@ -484,41 +484,7 @@ function discardSelected() {
 // Win/claim button logic uses the shared rules engine (window.Mahjong, served
 // from mahjong.js) — see Mahjong.checkWin / getValidClaims / getChowOptions above.
 
-// ── Chat & action bubbles ─────────────────────────────────────────────────────
-const CHAT_EMOJIS = ['👍','😂','🎉','😮','😢','🔥','👏','🤔','🙏','🀄'];
-const ACTION_LABELS = { pong: 'Pong 碰', kong: 'Kong 槓', chow: 'Chow 上' };
-
-function chatLineEl(entry) {
-  const div = document.createElement('div');
-  if (entry.kind === 'action') {
-    div.className = 'chat-msg chat-action';
-    const tiles = (entry.tiles || []).map(tileGlyph).join('');
-    div.textContent = `${entry.name}: ${ACTION_LABELS[entry.type] || entry.type} ${tiles}`;
-  } else {
-    div.className = 'chat-msg';
-    const nm = document.createElement('span');
-    nm.className = 'chat-name';
-    nm.textContent = entry.name + ': ';
-    const tx = document.createElement('span');
-    tx.textContent = entry.text; // textContent → no HTML injection from chat
-    div.append(nm, tx);
-  }
-  return div;
-}
-
-function appendChat(entry) {
-  const log = document.getElementById('chat-log');
-  if (!log) return;
-  log.appendChild(chatLineEl(entry));
-  log.scrollTop = log.scrollHeight;
-}
-
-function sendChat() {
-  const input = document.getElementById('chat-input');
-  if (input.value.trim()) socket.emit('chat', { text: input.value });
-  input.value = '';
-}
-
+// ── Action bubbles (chat itself is handled by the shared chat.js / window.MahjongChat) ──
 // Float a short-lived bubble over the acting player's seat. Lives in a separate
 // overlay layer so the next board render() (which clears player areas) can't wipe it.
 function showActionBubble(seat, type, tiles) {
@@ -534,37 +500,9 @@ function showActionBubble(seat, type, tiles) {
   const bubble = document.createElement('div');
   bubble.className = 'action-bubble';
   const glyphs = (tiles || []).map(tileGlyph).join('');
-  bubble.textContent = `${ACTION_LABELS[type] || type} ${glyphs}`;
+  bubble.textContent = `${MahjongChat.ACTION_LABELS[type] || type} ${glyphs}`;
   bubble.style.left = (r.left + r.width / 2) + 'px';
   bubble.style.top = (r.top + 8) + 'px';
   layer.appendChild(bubble);
   setTimeout(() => bubble.remove(), 2500);
 }
-
-function initChat() {
-  const bar = document.getElementById('emoji-bar');
-  CHAT_EMOJIS.forEach(e => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'emoji-btn';
-    b.textContent = e;
-    b.addEventListener('click', () => socket.emit('chat', { text: e }));
-    bar.appendChild(b);
-  });
-  document.getElementById('chat-send').addEventListener('click', sendChat);
-  document.getElementById('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
-  const widget = document.getElementById('chat-widget');
-  document.getElementById('chat-toggle').addEventListener('click', () => widget.classList.toggle('collapsed'));
-}
-
-socket.on('chatHistory', (msgs) => {
-  const log = document.getElementById('chat-log');
-  if (!log) return;
-  log.innerHTML = '';
-  (msgs || []).forEach(appendChat);
-});
-socket.on('chatMessage', appendChat);
-socket.on('playerAction', (entry) => {
-  appendChat(entry);
-  showActionBubble(entry.seat, entry.type, entry.tiles);
-});

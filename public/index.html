@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Mahjong</title>
+  <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -14,7 +15,7 @@
     <div class="lobby-subtitle">Hong Kong style · Play with friends</div>
 
     <div class="form-group">
-      <label>Your Name</label>
+      <label for="player-name">Your Name</label>
       <input type="text" id="player-name" placeholder="Enter your name" maxlength="20" autocomplete="off">
     </div>
 
@@ -23,7 +24,7 @@
     <div class="divider">or join existing</div>
 
     <div class="form-group">
-      <label>Room Code</label>
+      <label for="room-code-input">Room Code</label>
       <input type="text" id="room-code-input" placeholder="4-letter code" maxlength="4" autocomplete="off"
              style="text-transform:uppercase;letter-spacing:4px;font-weight:800;font-size:1.2rem;text-align:center">
     </div>
@@ -73,6 +74,7 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
+<script src="chat.js"></script>
 <script>
 const socket = io();
 let myIndex = null;
@@ -250,58 +252,8 @@ $('btn-start').addEventListener('click', () => socket.emit('startGame'));
 $('btn-add-bot').addEventListener('click', () => socket.emit('addBot', { difficulty: $('bot-difficulty').value }));
 $('btn-leave').addEventListener('click', () => socket.emit('leaveRoom'));
 
-// ── Chat (lobby) ─────────────────────────────────────────────────────────────
-const CHAT_EMOJIS = ['👍','😂','🎉','😮','😢','🔥','👏','🤔','🙏','🀄'];
-const ACTION_LABELS = { pong: 'Pong 碰', kong: 'Kong 槓', chow: 'Chow 上' };
-
-function chatLineEl(entry) {
-  const div = document.createElement('div');
-  if (entry.kind === 'action') {
-    div.className = 'chat-msg chat-action';
-    div.textContent = `${entry.name}: ${ACTION_LABELS[entry.type] || entry.type}`;
-  } else {
-    div.className = 'chat-msg';
-    const nm = document.createElement('span');
-    nm.className = 'chat-name';
-    nm.textContent = entry.name + ': ';
-    const tx = document.createElement('span');
-    tx.textContent = entry.text; // textContent → no HTML injection from chat
-    div.append(nm, tx);
-  }
-  return div;
-}
-function appendChat(entry) {
-  const log = $('chat-log');
-  log.appendChild(chatLineEl(entry));
-  log.scrollTop = log.scrollHeight;
-}
-function sendChat() {
-  const v = $('chat-input').value;
-  if (v.trim()) socket.emit('chat', { text: v });
-  $('chat-input').value = '';
-}
-
-(function initChat() {
-  const bar = $('emoji-bar');
-  CHAT_EMOJIS.forEach(e => {
-    const b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'emoji-btn';
-    b.textContent = e;
-    b.addEventListener('click', () => socket.emit('chat', { text: e }));
-    bar.appendChild(b);
-  });
-  $('chat-send').addEventListener('click', sendChat);
-  $('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
-})();
-
-socket.on('chatHistory', (msgs) => {
-  const log = $('chat-log');
-  log.innerHTML = '';
-  (msgs || []).forEach(appendChat);
-});
-socket.on('chatMessage', appendChat);
-socket.on('playerAction', appendChat);
+// ── Chat — handled by the shared module (chat.js / window.MahjongChat) ──
+MahjongChat.initChat(socket);
 </script>
 </body>
 </html>
