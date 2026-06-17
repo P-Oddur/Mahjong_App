@@ -48,10 +48,32 @@ function findTile(arr, suit, value) {
   return arr.find(t => t.suit === suit && t.value === value) ?? null;
 }
 
-// Recursive win check: 4 sets + 1 pair
+// 十三幺 / 七對 don't fit "4 sets + a pair", so they get dedicated detectors.
+const isTerminalOrHonor = t =>
+  ((t.suit === 'man' || t.suit === 'pin' || t.suit === 'bam') && (t.value === 1 || t.value === 9)) ||
+  t.suit === 'wind' || t.suit === 'dragon';
+const tileKey = t => `${t.suit}-${t.value}`;
+
+// Thirteen Orphans (十三幺): all 13 terminal/honour types present + one duplicate.
+// 14 tiles all terminal/honour with 13 distinct keys ⇒ every type present, one doubled.
+function isThirteenOrphans(tiles) {
+  return tiles.length === 14 && tiles.every(isTerminalOrHonor) && new Set(tiles.map(tileKey)).size === 13;
+}
+
+// Seven Pairs (七對): exactly seven DISTINCT pairs (a four-of-a-kind is not two pairs).
+function isSevenPairs(tiles) {
+  if (tiles.length !== 14) return false;
+  const counts = {};
+  for (const t of tiles) counts[tileKey(t)] = (counts[tileKey(t)] || 0) + 1;
+  const vals = Object.values(counts);
+  return vals.length === 7 && vals.every(c => c === 2);
+}
+
+// A win is 4 sets + 1 pair, or one of the two special concealed hands above.
 function checkWin(hand, melds) {
-  const setsNeeded = 4 - melds.length;
   const tiles = sortTiles(hand.filter(t => t.suit !== 'flower'));
+  if (melds.length === 0 && (isThirteenOrphans(tiles) || isSevenPairs(tiles))) return true;
+  const setsNeeded = 4 - melds.length;
   if (tiles.length !== setsNeeded * 3 + 2) return false;
   return canWin(tiles, setsNeeded, false);
 }
@@ -134,7 +156,7 @@ function getChowOptions(hand, discardedTile) {
   return opts;
 }
 
-const Mahjong = { createDeck, shuffle, sortTiles, checkWin, getValidClaims, getChowOptions };
+const Mahjong = { createDeck, shuffle, sortTiles, checkWin, getValidClaims, getChowOptions, isThirteenOrphans, isSevenPairs };
 // Usable both as a Node module (server) and a browser global (client) so the
 // client shares this one authoritative rules engine instead of a hand-copy.
 if (typeof module !== 'undefined' && module.exports) module.exports = Mahjong;

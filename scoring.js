@@ -13,7 +13,7 @@
 // enumerate every legal decomposition, score each, and keep the highest —
 // the standard "best interpretation wins" rule.
 
-const { sortTiles } = require('./mahjong');
+const { sortTiles, isThirteenOrphans, isSevenPairs } = require('./mahjong');
 
 const WINDS = ['east', 'south', 'west', 'north'];
 const SUITED = new Set(['man', 'pin', 'bam']);
@@ -24,6 +24,11 @@ const DEFAULT_SCORING = {
   limitFaan: 13, // a hand at/above this faan is a limit hand (爆棚); also caps payout
   basePoints: 1, // payout multiplier
 };
+
+// Fixed faan for the hands that aren't simple counts (house-rule tunable).
+const SEVEN_PAIRS_FAAN = 4;    // 七對
+const PURE_STRAIGHT_FAAN = 1;  // 清龍 (1-2-3 4-5-6 7-8-9 in one suit)
+const FLOWER_SET_FAAN = 1;     // 一台花 — per complete set of four flowers/seasons
 
 // ── Hand decomposition ───────────────────────────────────────────────────────
 
@@ -108,6 +113,41 @@ function isValuePair(d, c) {
   return false;
 }
 
+const chowStart = s => Math.min(...s.tiles.map(t => t.value));
+
+// 清龍: chows starting at 1, 4 and 7 all in the same suit.
+function hasPureStraight(d) {
+  for (const suit of SUITED) {
+    const starts = new Set(d.sets.filter(s => s.kind === 'chow' && s.tiles[0].suit === suit).map(chowStart));
+    if (starts.has(1) && starts.has(4) && starts.has(7)) return true;
+  }
+  return false;
+}
+
+// 九蓮寶燈: concealed full flush in the 1112345678999(+1) shape.
+function isNineGatesDecomp(d) {
+  if (!d.sets.every(s => s.concealed)) return false;
+  const tiles = allTilesOf(d);
+  if (!tiles.every(t => SUITED.has(t.suit)) || new Set(tiles.map(t => t.suit)).size !== 1) return false;
+  const cnt = {};
+  for (let v = 1; v <= 9; v++) cnt[v] = 0;
+  for (const t of tiles) cnt[t.value]++;
+  if (cnt[1] < 3 || cnt[9] < 3) return false;
+  for (let v = 2; v <= 8; v++) if (cnt[v] < 1) return false;
+  return true;
+}
+
+// Flowers come in two suits of four (1-4 and 5-8); a complete suit is 一台花.
+const FLOWER_SETS = [[1, 2, 3, 4], [5, 6, 7, 8]];
+const flowerSetCount = flowers => {
+  const vals = new Set((flowers || []).map(f => f.value));
+  return FLOWER_SETS.filter(set => set.every(v => vals.has(v))).length;
+};
+const hasAllFlowers = flowers => {
+  const vals = new Set((flowers || []).map(f => f.value));
+  return [1, 2, 3, 4, 5, 6, 7, 8].every(v => vals.has(v));
+};
+
 // ── Pattern table ────────────────────────────────────────────────────────────
 //
 // evaluate(ctx, decomp) returns the faan to add. For `limit` patterns it
@@ -116,8 +156,9 @@ function isValuePair(d, c) {
 // breakdown can show e.g. "×2".
 
 const PATTERNS = [
-  // Situational (whole-hand state)
-  { id: 'self-draw', name: 'Self-Draw', cn: '自摸',
+  // Situational (whole-hand state). `ctxOnly` patterns read only the context,
+  // never the decomposition, so the special-hand scorers can reuse them.
+  { id: 'self-draw', name: 'Self-Draw', cn: '自摸', ctxOnly: true,
     evaluate: c => (c.selfDraw ? 1 : 0) },
   { id: 'concealed', name: 'Concealed Hand', cn: '門前清',
     evaluate: (c, d) => (d.sets.every(s => s.concealed) ? 1 : 0) },
@@ -127,6 +168,8 @@ const PATTERNS = [
     evaluate: (c, d) => (d.sets.every(s => s.kind === 'chow') && !isValuePair(d, c) ? 1 : 0) },
   { id: 'all-pungs', name: 'All Triplets', cn: '對對糊',
     evaluate: (c, d) => (d.sets.every(s => s.kind === 'pung') ? 3 : 0) },
+  { id: 'pure-straight', name: 'Pure Straight', cn: '清龍',
+    evaluate: (c, d) => (hasPureStraight(d) ? PURE_STRAIGHT_FAAN : 0) },
 
   // Honour triplets (役牌). A wind that is both seat and round scores twice.
   { id: 'dragon-pung', name: 'Dragon Triplet', cn: '三元牌', perCount: true,
@@ -157,21 +200,28 @@ const PATTERNS = [
     evaluate: (c, d) => (allTilesOf(d).every(t => t.suit === 'wind' || t.suit === 'dragon') ? 1 : 0) },
   { id: 'all-terminals', name: 'All Terminals', cn: '清幺九', limit: true,
     evaluate: (c, d) => (allTilesOf(d).every(t => SUITED.has(t.suit) && (t.value === 1 || t.value === 9)) ? 1 : 0) },
+  { id: 'nine-gates', name: 'Nine Gates', cn: '九蓮寶燈', limit: true,
+    evaluate: (c, d) => (isNineGatesDecomp(d) ? 1 : 0) },
 
   // Situational bonuses — wired to optional context flags so advanced rules can
   // enable them later without touching the engine.
-  { id: 'kong-replacement', name: 'Win on Kong Replacement', cn: '槓上開花',
+  { id: 'kong-replacement', name: 'Win on Kong Replacement', cn: '槓上開花', ctxOnly: true,
     evaluate: c => (c.kongReplacement ? 1 : 0) },
-  { id: 'robbing-kong', name: 'Robbing the Kong', cn: '搶槓',
+  { id: 'robbing-kong', name: 'Robbing the Kong', cn: '搶槓', ctxOnly: true,
     evaluate: c => (c.robbingKong ? 1 : 0) },
-  { id: 'last-tile-draw', name: 'Win on Last Tile', cn: '海底撈月',
+  { id: 'last-tile-draw', name: 'Win on Last Tile', cn: '海底撈月', ctxOnly: true,
     evaluate: c => (c.selfDraw && c.lastTile ? 1 : 0) },
-  { id: 'last-tile-discard', name: 'Win on Last Discard', cn: '河底撈魚',
+  { id: 'last-tile-discard', name: 'Win on Last Discard', cn: '河底撈魚', ctxOnly: true,
     evaluate: c => (!c.selfDraw && c.lastTile ? 1 : 0) },
 
-  // Flowers matching the player's seat (正花).
-  { id: 'seat-flower', name: 'Seat Flower', cn: '正花', perCount: true,
+  // Flowers — matching the player's seat (正花), a complete set of four (一台花),
+  // or all eight (八仙過海, a limit hand).
+  { id: 'seat-flower', name: 'Seat Flower', cn: '正花', perCount: true, ctxOnly: true,
     evaluate: c => (c.flowers || []).filter(f => WINDS[(f.value - 1) % 4] === c.seatWind).length },
+  { id: 'flower-set', name: 'Flower Set', cn: '一台花', perCount: true, ctxOnly: true,
+    evaluate: c => flowerSetCount(c.flowers) * FLOWER_SET_FAAN },
+  { id: 'all-flowers', name: 'All Flowers', cn: '八仙過海', limit: true, ctxOnly: true,
+    evaluate: c => (hasAllFlowers(c.flowers) ? 1 : 0) },
 ];
 
 // ── Scoring ──────────────────────────────────────────────────────────────────
@@ -202,22 +252,62 @@ function scoreDecomposition(ctx, d, cfg) {
   return { faan, isLimit, breakdown };
 }
 
+// Context-only patterns (read just ctx, not a decomposition) are reused by the
+// special-hand scorers below.
+const CONTEXT_PATTERNS = PATTERNS.filter(p => p.ctxOnly);
+
+// 十三幺 — a limit hand; the context bonuses can't push past the cap anyway.
+function scoreThirteenOrphans(cfg) {
+  return { faan: cfg.limitFaan, isLimit: true,
+    breakdown: [{ id: 'thirteen-orphans', name: 'Thirteen Orphans', cn: '十三幺', limit: true }] };
+}
+
+// 七對 — fixed 4 faan, stacking with a flush and the context bonuses. Seven
+// honour pairs is 字一色 (all honours), a limit hand.
+function scoreSevenPairs(ctx, tiles, cfg) {
+  if (tiles.every(t => t.suit === 'wind' || t.suit === 'dragon')) {
+    return { faan: cfg.limitFaan, isLimit: true, breakdown: [
+      { id: 'seven-pairs', name: 'Seven Pairs', cn: '七對', faan: SEVEN_PAIRS_FAAN },
+      { id: 'all-honors', name: 'All Honours', cn: '字一色', limit: true },
+    ] };
+  }
+  let faan = SEVEN_PAIRS_FAAN;
+  const breakdown = [{ id: 'seven-pairs', name: 'Seven Pairs', cn: '七對', faan: SEVEN_PAIRS_FAAN }];
+  const suits = new Set(tiles.filter(t => SUITED.has(t.suit)).map(t => t.suit));
+  const honor = tiles.some(t => t.suit === 'wind' || t.suit === 'dragon');
+  if (suits.size === 1 && !honor) { faan += 7; breakdown.push({ id: 'full-flush', name: 'Full Flush', cn: '清一色', faan: 7 }); }
+  else if (suits.size === 1 && honor) { faan += 3; breakdown.push({ id: 'half-flush', name: 'Half Flush', cn: '混一色', faan: 3 }); }
+  for (const p of CONTEXT_PATTERNS) {
+    const v = p.evaluate(ctx, null);
+    if (!v) continue;
+    if (p.limit) return { faan: cfg.limitFaan, isLimit: true, breakdown: [...breakdown, { id: p.id, name: p.name, cn: p.cn, limit: true }] };
+    faan += v;
+    breakdown.push({ id: p.id, name: p.name, cn: p.cn, faan: v, count: p.perCount && v > 1 ? v : undefined });
+  }
+  return { faan, isLimit: false, breakdown };
+}
+
 // ctx: { hand, melds, seatWind, roundWind, selfDraw, flowers,
 //        kongReplacement?, robbingKong?, lastTile? }
 // `hand` is the concealed tiles INCLUDING the winning tile.
 // Returns { faan, rawFaan, isLimit, points, breakdown }. faan is capped at the
-// limit; rawFaan is the uncapped sum (useful for display/tie-breaks).
+// limit; rawFaan is the uncapped best interpretation's sum.
 function scoreWin(ctx, cfg = DEFAULT_SCORING) {
   const handTiles = (ctx.hand || []).filter(t => t.suit !== 'flower');
   const melds = (ctx.melds || []).map(normalizeMeld);
-  const decomps = decompose(handTiles, 4 - melds.length);
+
+  const candidates = [];
+  for (const dc of decompose(handTiles, 4 - melds.length)) {
+    candidates.push(scoreDecomposition(ctx, { sets: [...melds, ...dc.sets], pair: dc.pair }, cfg));
+  }
+  // Special concealed hands that aren't 4 sets + a pair.
+  if (melds.length === 0) {
+    if (isThirteenOrphans(handTiles)) candidates.push(scoreThirteenOrphans(cfg));
+    if (isSevenPairs(handTiles)) candidates.push(scoreSevenPairs(ctx, handTiles, cfg));
+  }
 
   let best = null;
-  for (const dc of decomps) {
-    const d = { sets: [...melds, ...dc.sets], pair: dc.pair };
-    const scored = scoreDecomposition(ctx, d, cfg);
-    if (!best || scored.faan > best.faan) best = scored;
-  }
+  for (const c of candidates) if (!best || c.faan > best.faan) best = c;
   if (!best) best = { faan: 0, isLimit: false, breakdown: [] };
 
   const faan = Math.min(best.faan, cfg.limitFaan);
