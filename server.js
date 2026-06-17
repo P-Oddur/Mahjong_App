@@ -494,24 +494,20 @@ function registerPass(room, playerIndex) {
   checkAllResponded(room);
 }
 
-function checkAllResponded(room) {
+// True once every player except `excludedSeat` (the discarder, or the kong
+// declarer) has either claimed or passed in the current response window.
+function allResponded(room, excludedSeat) {
   const g = room.game;
-  const n = room.players.length;
   const responded = new Set([...Object.keys(g.claims).map(Number), ...g.passes]);
-  const allOthers = Array.from({ length: n }, (_, i) => i).filter(i => i !== g.lastDiscardPlayer);
-  if (allOthers.every(i => responded.has(i))) {
-    processClaims(room);
-  }
+  return room.players.every((_, i) => i === excludedSeat || responded.has(i));
 }
 
-// Same as checkAllResponded, but for the robbing-the-kong window.
+function checkAllResponded(room) {
+  if (allResponded(room, room.game.lastDiscardPlayer)) processClaims(room);
+}
+
 function checkAllRespondedRob(room) {
-  const g = room.game;
-  if (!g.robKong) return;
-  const n = room.players.length;
-  const responded = new Set([...Object.keys(g.claims).map(Number), ...g.passes]);
-  const others = Array.from({ length: n }, (_, i) => i).filter(i => i !== g.robKong.seat);
-  if (others.every(i => responded.has(i))) resolveRob(room);
+  if (room.game.robKong && allResponded(room, room.game.robKong.seat)) resolveRob(room);
 }
 
 // ── Bots ─────────────────────────────────────────────────────────────────────
