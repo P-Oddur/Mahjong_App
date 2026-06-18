@@ -14,6 +14,9 @@ tools/release.js
 Thumbs.db
 .DS_Store
 
+# Local data (SQLite account store)
+data/
+
 # Blender working sources + local renders (shipped assets are exported .glb in public/assets/)
 *.blend
 *.blend1

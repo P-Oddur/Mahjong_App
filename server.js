@@ -6,6 +6,8 @@ const path = require('path');
 const { createDeck, shuffle, sortTiles, checkWin, getValidClaims } = require('./mahjong');
 const { pickBotName, chooseDiscard, findConcealedKong, decideClaim } = require('./bot');
 const { scoreWin, computePayments } = require('./scoring');
+const accounts = require('./accounts');
+accounts.open(); // create/open the SQLite account store (data/mahjong.db)
 
 const app = express();
 const server = http.createServer(app);
@@ -55,6 +57,8 @@ function publicRoom(room) {
       isBot: !!p.isBot,
       points: p.points || 0,
       difficulty: p.isBot ? (p.difficulty || 'normal') : null,
+      account: !!p.account,
+      balance: p.account ? accounts.balanceOf(p.account) : null,
     })),
   };
 }
@@ -191,7 +195,10 @@ function endGame(room, result) {
 
   // Apply point transfers to the running session scoreboard.
   if (result.payments) {
-    result.payments.forEach((amt, i) => { room.players[i].points = (room.players[i].points || 0) + amt; });
+    result.payments.forEach((amt, i) => {
+      room.players[i].points = (room.players[i].points || 0) + amt;
+      if (room.players[i].account && amt) accounts.addToBalance(room.players[i].account, amt); // per-hand persistence
+    });
   }
   result.totals = room.players.map(p => p.points || 0);
   result.roundWind = WINDS[room.roundWind || 0];
@@ -705,15 +712,34 @@ function scheduleRoomCleanup(room) {
 // ── Socket handlers ──────────────────────────────────────────────────────────
 
 io.on('connection', (socket) => {
+  // ── Accounts (optional username + 4-digit PIN; guests skip this) ──────────────
+  socket.on('login', ({ name, pin } = {}) => {
+    const res = accounts.loginOrRegister(name, pin);
+    if (res.ok) socket.data.account = { username: res.username, name: res.name };
+    socket.emit('loginResult', res);
+  });
+  socket.on('authToken', ({ token } = {}) => {
+    const u = accounts.verifyToken(token);
+    if (u) {
+      socket.data.account = { username: u.username, name: u.name };
+      socket.emit('loginResult', { ok: true, token, username: u.username, name: u.name, balance: u.balance });
+    } else {
+      socket.emit('loginResult', { ok: false, error: 'Session expired — log in again.' });
+    }
+  });
+  socket.on('logout', ({ token } = {}) => { if (token) accounts.logout(token); socket.data.account = null; });
+
   socket.on('createRoom', ({ playerName }) => {
     let code;
     do { code = genCode(); } while (rooms[code]);
 
     const token = genToken();
-    const player = { socketId: socket.id, token, name: (playerName || 'Player').trim().slice(0, 20) || 'Player', seatWind: 'east', hand: [], melds: [], flowers: [], connected: true, isBot: false, points: 0 };
+    const acct = socket.data.account || null;
+    const name = acct ? acct.name : ((playerName || 'Player').trim().slice(0, 20) || 'Player');
+    const player = { socketId: socket.id, token, name, account: acct ? acct.username : null, seatWind: 'east', hand: [], melds: [], flowers: [], connected: true, isBot: false, points: 0 };
     rooms[code] = { code, players: [player], state: 'waiting', game: null, cleanupTimer: null, dealer: 0, roundWind: 0, dealerPasses: 0, lastResult: null, chat: [], matchRounds: 4, handNumber: 0, dealerStreak: 0, matchOver: false, endVotes: new Set() };
     socket.join(code);
-    socket.data = { code, playerIndex: 0 };
+    socket.data.code = code; socket.data.playerIndex = 0;
     socket.emit('roomCreated', { code, playerIndex: 0, token });
     io.to(code).emit('roomUpdate', publicRoom(rooms[code]));
   });
@@ -727,11 +753,13 @@ io.on('connection', (socket) => {
 
     const token = genToken();
     const playerIndex = room.players.length;
-    const player = { socketId: socket.id, token, name: (playerName || 'Player').trim().slice(0, 20) || 'Player', seatWind: WINDS[playerIndex], hand: [], melds: [], flowers: [], connected: true, isBot: false, points: 0 };
+    const acct = socket.data.account || null;
+    const name = acct ? acct.name : ((playerName || 'Player').trim().slice(0, 20) || 'Player');
+    const player = { socketId: socket.id, token, name, account: acct ? acct.username : null, seatWind: WINDS[playerIndex], hand: [], melds: [], flowers: [], connected: true, isBot: false, points: 0 };
     room.players.push(player);
     assignSeatWinds(room);
     socket.join(c);
-    socket.data = { code: c, playerIndex };
+    socket.data.code = c; socket.data.playerIndex = playerIndex;
     socket.emit('roomJoined', { code: c, playerIndex, token });
     socket.emit('chatHistory', room.chat);
     io.to(c).emit('roomUpdate', publicRoom(room));
@@ -750,7 +778,7 @@ io.on('connection', (socket) => {
     p.socketId = socket.id;
     p.connected = true;
     socket.join(c);
-    socket.data = { code: c, playerIndex };
+    socket.data.code = c; socket.data.playerIndex = playerIndex;
     socket.emit('rejoined', { code: c, playerIndex, isHost: playerIndex === 0, state: room.state });
     socket.emit('chatHistory', room.chat);
     io.to(c).emit('roomUpdate', publicRoom(room));
@@ -788,7 +816,7 @@ io.on('connection', (socket) => {
 
     room.players.splice(playerIndex, 1);
     socket.leave(code);
-    socket.data = {};
+    socket.data.code = undefined; socket.data.playerIndex = undefined;
     socket.emit('leftRoom');
 
     if (!room.players.some(p => !p.isBot)) {

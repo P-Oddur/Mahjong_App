@@ -14,23 +14,40 @@
     <div class="lobby-title">Mahjong</div>
     <div class="lobby-subtitle">Hong Kong style · Play with friends</div>
 
-    <div class="form-group">
-      <label for="player-name">Your Name</label>
-      <input type="text" id="player-name" placeholder="Enter your name" maxlength="20" autocomplete="off">
+    <!-- Step 1: log in (saves your balance) or continue as a guest -->
+    <div id="entry">
+      <div class="form-group">
+        <label for="player-name">Your Name</label>
+        <input type="text" id="player-name" placeholder="Enter your name" maxlength="20" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label for="pin-input">4-digit PIN <span style="opacity:0.6;font-weight:400">— saves your balance</span></label>
+        <input type="password" id="pin-input" inputmode="numeric" maxlength="4" placeholder="••••" autocomplete="off"
+               style="letter-spacing:8px;text-align:center;font-size:1.2rem;font-weight:800">
+      </div>
+      <button class="btn btn-primary" id="btn-login" style="width:100%;margin-bottom:8px">Log in / Sign up</button>
+      <button class="btn btn-ghost" id="btn-guest" style="width:100%">Play as guest</button>
+      <div class="error-msg" id="login-error"></div>
     </div>
 
-    <button class="btn btn-primary" id="btn-create" style="width:100%;margin-bottom:10px">Create Room</button>
+    <!-- Step 2: create or join a room -->
+    <div id="ready" class="hidden">
+      <div id="acct-banner" style="text-align:center;font-weight:700;margin-bottom:14px;padding:8px;border-radius:8px;background:rgba(255,255,255,0.06)"></div>
 
-    <div class="divider">or join existing</div>
+      <button class="btn btn-primary" id="btn-create" style="width:100%;margin-bottom:10px">Create Room</button>
 
-    <div class="form-group">
-      <label for="room-code-input">Room Code</label>
-      <input type="text" id="room-code-input" placeholder="4-letter code" maxlength="4" autocomplete="off"
-             style="text-transform:uppercase;letter-spacing:4px;font-weight:800;font-size:1.2rem;text-align:center">
+      <div class="divider">or join existing</div>
+
+      <div class="form-group">
+        <label for="room-code-input">Room Code</label>
+        <input type="text" id="room-code-input" placeholder="4-letter code" maxlength="4" autocomplete="off"
+               style="text-transform:uppercase;letter-spacing:4px;font-weight:800;font-size:1.2rem;text-align:center">
+      </div>
+      <button class="btn btn-secondary" id="btn-join" style="width:100%">Join Room</button>
+
+      <div class="error-msg" id="error-msg"></div>
+      <button class="btn btn-ghost" id="btn-switch" style="width:100%;margin-top:10px;opacity:0.75;font-size:0.85rem">← Log out / switch</button>
     </div>
-    <button class="btn btn-secondary" id="btn-join" style="width:100%">Join Room</button>
-
-    <div class="error-msg" id="error-msg"></div>
   </div>
 
   <div class="lobby-card hidden" id="section-lobby">
@@ -91,6 +108,9 @@ let myIndex = null;
 let myCode = null;
 let myToken = null;
 let isHost = false;
+let myName = null;     // resolved display name (account name, or the guest's typed name)
+let account = null;    // { token, name, balance } when logged in, else null
+const AUTH_KEY = 'mjAuth';
 
 const $ = id => document.getElementById(id);
 // Escape user-controlled text (player names) before putting it in innerHTML.
@@ -146,6 +166,7 @@ socket.on('rejoinError', () => {
   myCode = myToken = myIndex = null;
   $('section-lobby').classList.add('hidden');
   $('section-join').classList.remove('hidden');
+  if (!account && !myName) showEntry();
 });
 
 socket.on('identityUpdate', ({ playerIndex, isHost: host }) => {
@@ -155,22 +176,73 @@ socket.on('identityUpdate', ({ playerIndex, isHost: host }) => {
   updateHostControls();
 });
 
-$('btn-create').addEventListener('click', () => {
+// ── Account login (optional — guests skip it) ────────────────────────────────
+function showEntry() {
+  account = null;
+  $('ready').classList.add('hidden');
+  $('entry').classList.remove('hidden');
+  $('login-error').textContent = '';
+}
+function showReady() {
+  $('entry').classList.add('hidden');
+  $('ready').classList.remove('hidden');
+  $('acct-banner').innerHTML = account
+    ? `✓ Logged in as <b>${escapeHtml(account.name)}</b> · 💰 ${account.balance}`
+    : `Playing as guest: <b>${escapeHtml(myName)}</b><br><span style="font-weight:400;opacity:0.7;font-size:0.8rem">Sign in to save your balance</span>`;
+}
+
+$('btn-login').addEventListener('click', () => {
   const name = $('player-name').value.trim();
-  if (!name) { showError('Please enter your name'); return; }
-  socket.emit('createRoom', { playerName: name });
+  const pin = $('pin-input').value;
+  if (!name) { $('login-error').textContent = 'Enter a name'; return; }
+  if (!/^\d{4}$/.test(pin)) { $('login-error').textContent = 'PIN must be exactly 4 digits'; return; }
+  socket.emit('login', { name, pin });
+});
+$('btn-guest').addEventListener('click', () => {
+  const name = $('player-name').value.trim();
+  if (!name) { $('login-error').textContent = 'Enter a name'; return; }
+  account = null; myName = name;
+  showReady();
+});
+$('btn-switch').addEventListener('click', () => {
+  if (account) socket.emit('logout', { token: account.token });
+  localStorage.removeItem(AUTH_KEY);
+  account = null; myName = null;
+  $('pin-input').value = '';
+  showEntry();
+});
+$('player-name').addEventListener('keydown', e => { if (e.key === 'Enter') $('pin-input').focus(); });
+$('pin-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-login').click(); });
+
+socket.on('loginResult', res => {
+  if (!res.ok) { $('login-error').textContent = res.error || 'Login failed'; return; }
+  account = { token: res.token, name: res.name, balance: res.balance };
+  myName = res.name;
+  localStorage.setItem(AUTH_KEY, JSON.stringify({ token: res.token, name: res.name }));
+  showReady();
 });
 
+// Resume a stored login on page load.
+(function restoreLogin() {
+  try {
+    const a = JSON.parse(localStorage.getItem(AUTH_KEY) || 'null');
+    if (a && a.token) { $('player-name').value = a.name || ''; socket.emit('authToken', { token: a.token }); }
+  } catch (_) {}
+})();
+
+// ── Create / join (only reachable once logged in or in guest mode) ────────────
+$('btn-create').addEventListener('click', () => {
+  if (!myName) { showError('Log in or continue as a guest first'); return; }
+  socket.emit('createRoom', { playerName: myName });
+});
 $('btn-join').addEventListener('click', doJoin);
 $('room-code-input').addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
-$('player-name').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-create').click(); });
 
 function doJoin() {
-  const name = $('player-name').value.trim();
+  if (!myName) { showError('Log in or continue as a guest first'); return; }
   const code = $('room-code-input').value.trim().toUpperCase();
-  if (!name) { showError('Please enter your name'); return; }
   if (code.length !== 4) { showError('Enter a 4-letter room code'); return; }
-  socket.emit('joinRoom', { playerName: name, code });
+  socket.emit('joinRoom', { playerName: myName, code });
 }
 
 socket.on('roomCreated', ({ code, playerIndex, token }) => {
@@ -196,7 +268,7 @@ socket.on('roomUpdate', (room) => {
   room.players.forEach((p, i) => {
     const li = document.createElement('li');
     li.innerHTML = `
-      <span>${p.isBot ? '🤖 ' : ''}${escapeHtml(p.name)}</span>
+      <span>${p.isBot ? '🤖 ' : ''}${escapeHtml(p.name)}${p.account && p.balance != null ? ` <span style="opacity:0.7;font-size:0.78rem">💰${p.balance}</span>` : ''}</span>
       <span class="player-wind-badge">${winds[p.seatWind] || p.seatWind}</span>
       ${p.isBot ? `<span class="player-wind-badge" style="color:${diffColor[p.difficulty] || '#fff'};text-transform:capitalize">${p.difficulty || 'normal'}</span>` : ''}
       ${i === 0 ? '<span class="host-badge">HOST</span>' : ''}
