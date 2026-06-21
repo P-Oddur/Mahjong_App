@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mahjong 3D</title>
+  <link rel="icon" href="data:,">
+
+  <!-- Three.js r0.184.0 via jsdelivr import map (no build step). Modules under
+       /js3d resolve `three` and `three/addons/` against these URLs. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <style>
+    /* Minimal page chrome — the 3D canvas fills the viewport; the HUD overlays it.
+       Detailed HUD styling lives in hud.js (it builds/styles its own widgets) so
+       this file only establishes the full-screen layout and overlay stacking. */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #0a0a0c; color: #f0e9d8;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      -webkit-user-select: none; user-select: none;
+    }
+    /* Full-screen render target. */
+    #game3d-canvas {
+      position: fixed; inset: 0;
+      width: 100%; height: 100%;
+      display: block; touch-action: none;
+    }
+    /* HUD overlay container: sits above the canvas, passes pointer events through
+       except where individual HUD widgets re-enable them. hud.js fills the empty
+       divs below; they intentionally start empty here. */
+    #hud {
+      position: fixed; inset: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #hud .hud-interactive { pointer-events: auto; }
+
+    /* Center reticle. */
+    #hud-reticle {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 14px; height: 14px;
+      pointer-events: none;
+    }
+
+    /* Top status banner + wall counter. */
+    #hud-status {
+      position: absolute; top: 12px; left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+    }
+
+    /* Bottom action bar (claim/discard/win/pass buttons + look-away hand strip). */
+    #hud-action-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; flex-direction: column; align-items: center;
+    }
+
+    /* Claim countdown bar (driven by claimDeadline). */
+    #hud-claim-timer {
+      position: absolute; top: 0; left: 0; right: 0;
+      height: 4px;
+    }
+
+    /* 2D fallback hand strip shown when the rack leaves the camera frustum. */
+    #hud-look-away-hand {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; justify-content: center;
+      opacity: 0; transition: opacity 0.25s ease;
+    }
+
+    /* Game-over / standings overlay (host Next Hand, Vote, Lobby). */
+    #hud-game-over {
+      position: absolute; inset: 0;
+      display: none;
+      align-items: center; justify-content: center;
+      background: rgba(0, 0, 0, 0.7);
+    }
+
+    /* Loading splash while GLBs download. hud.js may hide this once ready. */
+    #loading {
+      position: fixed; inset: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 12px;
+      background: #0a0a0c; color: #f0c040;
+      font-size: 1.1rem; letter-spacing: 2px;
+    }
+    #loading.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <!-- Full-screen render target. -->
+  <canvas id="game3d-canvas"></canvas>
+
+  <!-- Thin HUD overlay container. These are intentionally EMPTY — hud.js (built by
+       another agent) populates each one. Their ids form the HUD contract. -->
+  <div id="hud">
+    <div id="hud-reticle"></div>
+    <div id="hud-status"></div>
+    <div id="hud-claim-timer"></div>
+    <div id="hud-action-bar"></div>
+    <div id="hud-look-away-hand"></div>
+    <div id="hud-game-over"></div>
+  </div>
+
+  <!-- Loading splash, hidden once the scene is ready. -->
+  <div id="loading"><div>Loading parlor…</div></div>
+
+  <!-- Same socket.io client URL game.html uses (served by the backend). Must load
+       before any module that calls io(). -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <!-- The orchestrator. Reads sessionStorage, connects, rejoins, builds the scene,
+       and runs the render loop. All other modules are imported by main.js. -->
+  <script type="module" src="/js3d/main.js"></script>
+</body>
+</html>

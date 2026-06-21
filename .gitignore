@@ -21,3 +21,6 @@ data/
 *.blend
 *.blend1
 /assets/
+
+# Imported Open Design 3D environment source (integrated into public/, not committed raw)
+/_from-open-design/
