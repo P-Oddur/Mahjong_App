@@ -32,6 +32,15 @@ function open(dbPath) {
     balance  INTEGER NOT NULL DEFAULT ${START_BALANCE},
     created  INTEGER NOT NULL
   )`);
+  // Saved custom scoring rulesets (added idempotently — existing DBs upgrade in
+  // place). The JSON is a server-sanitized ruleset object.
+  db.exec(`CREATE TABLE IF NOT EXISTS rulesets (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner   TEXT NOT NULL,        -- users.username key
+    name    TEXT NOT NULL,
+    json    TEXT NOT NULL,
+    created INTEGER NOT NULL
+  )`);
   return db;
 }
 
@@ -105,4 +114,51 @@ function addToBalance(key, delta) {
 
 function logout(token) { sessions.delete(token); }
 
-module.exports = { open, loginOrRegister, verifyToken, balanceOf, addToBalance, logout, START_BALANCE };
+// ── Saved rulesets ────────────────────────────────────────────────────────────
+const MAX_RULESETS_PER_USER = 30;
+const MAX_RULESET_NAME = 40;
+const MAX_RULESET_JSON = 20_000;
+const safeParse = s => { try { return JSON.parse(s); } catch (_) { return null; } };
+
+function listRulesets(owner) {
+  if (!owner) return [];
+  const rows = db.prepare("SELECT id, name, json, created FROM rulesets WHERE owner = ? ORDER BY created DESC").all(owner);
+  return rows.map(r => ({ id: r.id, name: r.name, created: r.created, ruleset: safeParse(r.json) }))
+    .filter(r => r.ruleset);
+}
+
+// Save (insert) or overwrite (by name) one of a user's rulesets. `json` is the
+// already-stringified, server-sanitized ruleset.
+function saveRuleset(owner, name, json) {
+  if (!owner) return { ok: false, error: "Log in to save rulesets." };
+  name = String(name || "").trim().slice(0, MAX_RULESET_NAME);
+  if (!name) return { ok: false, error: "Give the ruleset a name." };
+  if (typeof json !== "string" || json.length > MAX_RULESET_JSON) return { ok: false, error: "Ruleset is too large." };
+  const existing = db.prepare("SELECT id FROM rulesets WHERE owner = ? AND name = ?").get(owner, name);
+  if (existing) {
+    db.prepare("UPDATE rulesets SET json = ?, created = ? WHERE id = ?").run(json, Date.now(), existing.id);
+    return { ok: true, id: existing.id };
+  }
+  const { c } = db.prepare("SELECT COUNT(*) AS c FROM rulesets WHERE owner = ?").get(owner);
+  if (c >= MAX_RULESETS_PER_USER) return { ok: false, error: `Limit of ${MAX_RULESETS_PER_USER} saved rulesets reached.` };
+  const info = db.prepare("INSERT INTO rulesets (owner, name, json, created) VALUES (?,?,?,?)").run(owner, name, json, Date.now());
+  return { ok: true, id: Number(info.lastInsertRowid) };
+}
+
+function getRuleset(id) {
+  const row = db.prepare("SELECT id, owner, name, json FROM rulesets WHERE id = ?").get(id);
+  if (!row) return null;
+  const ruleset = safeParse(row.json);
+  return ruleset ? { id: row.id, owner: row.owner, name: row.name, ruleset } : null;
+}
+
+function deleteRuleset(owner, id) {
+  if (!owner) return { ok: false };
+  db.prepare("DELETE FROM rulesets WHERE id = ? AND owner = ?").run(id, owner);
+  return { ok: true };
+}
+
+module.exports = {
+  open, loginOrRegister, verifyToken, balanceOf, addToBalance, logout, START_BALANCE,
+  listRulesets, saveRuleset, getRuleset, deleteRuleset,
+};

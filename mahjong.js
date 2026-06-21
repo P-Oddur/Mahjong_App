@@ -69,10 +69,91 @@ function isSevenPairs(tiles) {
   return vals.length === 7 && vals.every(c => c === 2);
 }
 
-// A win is 4 sets + 1 pair, or one of the two special concealed hands above.
-function checkWin(hand, melds) {
+// ── Knitted hands (組合龍 / 全不靠 / 七星不靠) ─────────────────────────────────
+// A "knitted" line splits 1-9 into three families (1-4-7 / 2-5-8 / 3-6-9), each
+// family assigned to a distinct suit. The family of a value is (value-1) % 3.
+const KNIT_PERMS = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+const isHonorTile = t => t.suit === 'wind' || t.suit === 'dragon';
+
+function knittedAssignmentExists(suited) {
+  for (const perm of KNIT_PERMS) {
+    const assign = { man: perm[0], pin: perm[1], bam: perm[2] };
+    if (suited.every(t => (t.value - 1) % 3 === assign[t.suit])) return true;
+  }
+  return false;
+}
+
+// 七星不靠 — all 7 honours (one each) + 7 suited singles on one knitted line.
+function isGreaterKnitted(tiles) {
+  if (tiles.length !== 14 || new Set(tiles.map(tileKey)).size !== 14) return false;
+  const honors = tiles.filter(isHonorTile);
+  const suited = tiles.filter(t => SUITS.includes(t.suit));
+  if (honors.length !== 7 || suited.length !== 7) return false;
+  return knittedAssignmentExists(suited);
+}
+
+// 全不靠 — honours (≤7) + suited singles on one knitted line, all 14 distinct.
+function isLesserKnitted(tiles) {
+  if (tiles.length !== 14 || new Set(tiles.map(tileKey)).size !== 14) return false;
+  const honors = tiles.filter(isHonorTile);
+  const suited = tiles.filter(t => SUITS.includes(t.suit));
+  if (honors.length + suited.length !== 14 || honors.length > 7) return false;
+  return knittedAssignmentExists(suited);
+}
+
+// 組合龍 — the full knitted 1-9 (one family per suit) + one normal set + a pair.
+function isKnittedStraightWin(tiles) {
+  if (tiles.length !== 14) return false;
+  for (const perm of KNIT_PERMS) {
+    const assign = { man: perm[0], pin: perm[1], bam: perm[2] };
+    const rem = [...tiles];
+    let ok = true;
+    for (const suit of SUITS) {
+      for (let v = 1; v <= 9 && ok; v++) {
+        if ((v - 1) % 3 !== assign[suit]) continue;
+        const idx = rem.findIndex(t => t.suit === suit && t.value === v);
+        if (idx === -1) ok = false; else rem.splice(idx, 1);
+      }
+    }
+    if (ok && canWin(sortTiles(rem), 1, false)) return true;
+  }
+  return false;
+}
+
+// Identify a knitted win for the scorer (greater 24 outranks the two 12s).
+function parseKnitted(tiles) {
+  if (isGreaterKnitted(tiles)) return { kind: 'greater' };
+  if (isKnittedStraightWin(tiles)) return { kind: 'knitted-straight' };
+  if (isLesserKnitted(tiles)) return { kind: 'lesser' };
+  return null;
+}
+
+// Which non-standard winning shapes a ruleset permits. With no ruleset the
+// defaults reproduce the original engine: seven pairs and thirteen orphans are
+// legal, knitted hands are not.
+function legalWinShapes(ruleset) {
+  const a = (ruleset && ruleset.allow) || {};
+  return {
+    sevenPairs: a.sevenPairs !== false,
+    thirteenOrphans: a.thirteenOrphans !== false,
+    greaterKnitted: a.greaterKnitted === true,
+    lesserKnitted: a.lesserKnitted === true,
+    knittedStraight: a.knittedStraight === true,
+  };
+}
+
+// A win is 4 sets + 1 pair, or one of the special concealed hands above — each
+// gated by what the active ruleset permits.
+function checkWin(hand, melds, ruleset) {
   const tiles = sortTiles(hand.filter(t => t.suit !== 'flower'));
-  if (melds.length === 0 && (isThirteenOrphans(tiles) || isSevenPairs(tiles))) return true;
+  if (melds.length === 0) {
+    const allow = legalWinShapes(ruleset);
+    if (allow.thirteenOrphans && isThirteenOrphans(tiles)) return true;
+    if (allow.sevenPairs && isSevenPairs(tiles)) return true;
+    if (allow.greaterKnitted && isGreaterKnitted(tiles)) return true;
+    if (allow.lesserKnitted && isLesserKnitted(tiles)) return true;
+    if (allow.knittedStraight && isKnittedStraightWin(tiles)) return true;
+  }
   const setsNeeded = 4 - melds.length;
   if (tiles.length !== setsNeeded * 3 + 2) return false;
   return canWin(tiles, setsNeeded, false);
@@ -119,10 +200,10 @@ function canWin(tiles, sets, hasPair) {
 }
 
 // Return array of valid claim types for a player
-function getValidClaims(hand, melds, discardedTile, isNextPlayer) {
+function getValidClaims(hand, melds, discardedTile, isNextPlayer, ruleset) {
   const claims = [];
   const testHand = [...hand, discardedTile];
-  if (checkWin(testHand, melds)) claims.push('win');
+  if (checkWin(testHand, melds, ruleset)) claims.push('win');
   const matching = hand.filter(t => t.suit === discardedTile.suit && t.value === discardedTile.value);
   if (matching.length >= 3) claims.push('kong');
   if (matching.length >= 2) claims.push('pong');
@@ -156,7 +237,7 @@ function getChowOptions(hand, discardedTile) {
   return opts;
 }
 
-const Mahjong = { createDeck, shuffle, sortTiles, checkWin, getValidClaims, getChowOptions, isThirteenOrphans, isSevenPairs };
+const Mahjong = { createDeck, shuffle, sortTiles, checkWin, getValidClaims, getChowOptions, isThirteenOrphans, isSevenPairs, isGreaterKnitted, isLesserKnitted, isKnittedStraightWin, parseKnitted, legalWinShapes };
 // Usable both as a Node module (server) and a browser global (client) so the
 // client shares this one authoritative rules engine instead of a hand-copy.
 if (typeof module !== 'undefined' && module.exports) module.exports = Mahjong;

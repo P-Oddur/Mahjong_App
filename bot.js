@@ -89,8 +89,8 @@ function countPairs(tiles) {
 //   easy   – passes on most pong/chow chances
 //   normal – claims only if it keeps a pair as the head (default; original)
 //   hard   – claims whenever legal (more aggressive)
-function decideClaim(hand, melds, discard, isNext, difficulty = 'normal') {
-  const valid = getValidClaims(hand, melds, discard, isNext);
+function decideClaim(hand, melds, discard, isNext, difficulty = 'normal', ruleset) {
+  const valid = getValidClaims(hand, melds, discard, isNext, ruleset);
   if (valid.includes('win')) return { type: 'win' };
   if (valid.includes('kong')) return { type: 'kong' };
 

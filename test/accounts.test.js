@@ -56,5 +56,33 @@ check('rate-limit locks a name after repeated wrong PINs', () => {
   assert.ok(!r.ok && /many tries|wait/i.test(r.error), 'should be locked out');
 });
 
+check('saveRuleset + listRulesets round-trip', () => {
+  const r = accounts.saveRuleset('josh', 'House Rules', JSON.stringify({ mode: 'mcr-additive' }));
+  assert.ok(r.ok && r.id, 'saved');
+  const list = accounts.listRulesets('josh');
+  assert.ok(list.some(x => x.name === 'House Rules' && x.ruleset.mode === 'mcr-additive'));
+});
+
+check('saving the same name updates in place (no duplicate)', () => {
+  accounts.saveRuleset('josh', 'House Rules', JSON.stringify({ mode: 'hk-grouped' }));
+  const list = accounts.listRulesets('josh').filter(x => x.name === 'House Rules');
+  assert.strictEqual(list.length, 1, 'no duplicate name');
+  assert.strictEqual(list[0].ruleset.mode, 'hk-grouped', 'updated');
+});
+
+check('getRuleset + owner-scoped deleteRuleset', () => {
+  const saved = accounts.saveRuleset('josh', 'ToDelete', JSON.stringify({ mode: 'hk-doubling' }));
+  assert.ok(accounts.getRuleset(saved.id), 'getRuleset finds it');
+  accounts.deleteRuleset('mei', saved.id);               // wrong owner → no-op
+  assert.ok(accounts.getRuleset(saved.id), 'not deleted by a different owner');
+  accounts.deleteRuleset('josh', saved.id);
+  assert.strictEqual(accounts.getRuleset(saved.id), null, 'deleted by owner');
+});
+
+check('rejects an oversized ruleset json', () => {
+  const r = accounts.saveRuleset('josh', 'Big', 'x'.repeat(20001));
+  assert.ok(!r.ok && /large/i.test(r.error));
+});
+
 console.log(`\n${passed} account tests passed`);
 try { fs.unlinkSync(tmp); } catch {}

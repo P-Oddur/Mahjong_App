@@ -245,10 +245,12 @@ function renderScoreDetail(result) {
   if (score) {
     const head = document.createElement('div');
     head.className = 'score-head';
-    head.innerHTML =
-      `<span class="score-faan">${score.faan} 番</span>` +
-      (score.isLimit ? '<span class="score-limit">LIMIT</span>' : '') +
-      `<span class="score-points">${score.points} pts</span>`;
+    // MCR additive has no faan — its value IS points; HK modes show 番 → pts.
+    head.innerHTML = score.mode === 'mcr-additive'
+      ? `<span class="score-faan">${score.value} pts</span>`
+      : `<span class="score-faan">${score.faan} 番</span>` +
+        (score.isLimit ? '<span class="score-limit">LIMIT</span>' : '') +
+        `<span class="score-points">${score.points} pts</span>`;
     el.appendChild(head);
 
     if (score.breakdown?.length) {
@@ -257,7 +259,7 @@ function renderScoreDetail(result) {
       score.breakdown.forEach(b => {
         const cnt = b.count ? ` ×${b.count}` : '';
         const li = document.createElement('li');
-        li.innerHTML = `<span>${b.name}${cnt} <span class="score-cn">${b.cn}</span></span><span class="score-b-faan">${b.limit ? 'LIMIT' : '+' + b.faan}</span>`;
+        li.innerHTML = `<span>${b.name}${cnt} <span class="score-cn">${b.cn}</span></span><span class="score-b-faan">${b.limit ? 'LIMIT' : '+' + (b.points != null ? b.points : b.faan)}</span>`;
         ul.appendChild(li);
       });
       el.appendChild(ul);
@@ -431,7 +433,7 @@ function renderActions(s) {
     if (selectedTileId !== null) btnDiscard.classList.remove('hidden');
 
     // Self-draw win check
-    if (Mahjong.checkWin(me.hand, me.melds)) btnWin.classList.remove('hidden');
+    if (Mahjong.checkWin(me.hand, me.melds, s.ruleset)) btnWin.classList.remove('hidden');
 
     // Concealed kong
     const groups = {};
@@ -462,7 +464,7 @@ function renderActions(s) {
   // Claim window — not my discard
   if (s.phase === 'claim' && s.lastDiscardPlayer !== myIndex && !claimResponded && me.hand) {
     const isNext = (s.lastDiscardPlayer + 1) % s.players.length === myIndex;
-    const claims = Mahjong.getValidClaims(me.hand, me.melds, s.lastDiscard, isNext);
+    const claims = Mahjong.getValidClaims(me.hand, me.melds, s.lastDiscard, isNext, s.ruleset);
 
     if (claims.length > 0) {
       claims.forEach(type => {
@@ -504,7 +506,7 @@ function renderActions(s) {
 
   // Robbing-the-kong window — anyone but the declarer may win on the added tile
   if (s.phase === 'rob' && s.robKong && s.robKong.seat !== myIndex && !claimResponded && me.hand) {
-    if (Mahjong.checkWin([...me.hand, s.robKong.tile], me.melds)) {
+    if (Mahjong.checkWin([...me.hand, s.robKong.tile], me.melds, s.ruleset)) {
       const btn = document.createElement('button');
       btn.className = 'action-btn win-btn';
       btn.textContent = '🏆 Rob!';

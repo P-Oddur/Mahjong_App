@@ -73,6 +73,16 @@
         </select>
       </div>
       <div id="match-length-info" class="hidden" style="font-size:0.82rem;opacity:0.85;margin-bottom:10px"></div>
+      <div id="rules-summary" style="font-size:0.82rem;opacity:0.85;margin-bottom:10px"></div>
+      <button class="btn btn-secondary hidden" id="btn-rules" style="width:100%;margin-bottom:10px">⚙ Scoring Rules</button>
+      <div id="rules-panel" class="hidden" style="background:rgba(0,0,0,0.3);border:1px solid rgba(240,192,64,0.25);border-radius:10px;padding:10px;margin-bottom:10px;max-height:62vh;overflow:auto">
+        <div id="rules-editor"></div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-secondary" id="btn-save-ruleset" style="flex:1">💾 Save as…</button>
+          <a class="btn btn-ghost" href="/sandbox.html" target="_blank" rel="noopener" style="flex:1;text-align:center;text-decoration:none">🧪 Sandbox</a>
+        </div>
+        <div id="rules-save-msg" style="font-size:0.78rem;opacity:0.85;min-height:16px;margin-top:4px"></div>
+      </div>
       <div id="add-bot-row" class="hidden" style="display:flex;gap:8px;margin-bottom:10px">
         <select id="bot-difficulty" title="New bot difficulty"
                 style="flex:0 0 auto;padding:10px;border-radius:8px;border:2px solid rgba(255,255,255,0.3);background:rgba(0,0,0,0.4);color:#fff;font-weight:700;cursor:pointer;outline:none">
@@ -82,6 +92,10 @@
         </select>
         <button class="btn btn-secondary" id="btn-add-bot" style="flex:1">🤖 Add Bot</button>
       </div>
+      <label id="mode3d-row" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:0.85rem;cursor:pointer;user-select:none">
+        <input type="checkbox" id="mode3d-toggle" style="width:18px;height:18px;cursor:pointer">
+        <span>🀄 3D mode <span style="opacity:0.6;font-weight:400">— experimental first-person table</span></span>
+      </label>
       <button class="btn btn-primary hidden" id="btn-start" style="width:100%">Start Game</button>
       <div class="waiting-hint hidden" id="waiting-hint">Waiting for host to start...</div>
       <button class="btn btn-ghost" id="btn-leave" style="width:100%;margin-top:10px">Leave Room</button>
@@ -101,6 +115,7 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
+<script src="/ruleset-editor.js"></script>
 <script src="chat.js"></script>
 <script>
 const socket = io();
@@ -124,6 +139,17 @@ function saveSession() {
 }
 function clearSession() { sessionStorage.removeItem('mahjong'); }
 
+// 3D-mode preference (per-browser). When on, the game opens the experimental
+// first-person Three.js page instead of the 2D board. Additive: the 2D page
+// stays the default and is left untouched.
+function gamePage() { return localStorage.getItem('mahjong3d') === '1' ? '/game3d.html' : '/game.html'; }
+(function init3dToggle() {
+  const cb = $('mode3d-toggle');
+  if (!cb) return;
+  cb.checked = localStorage.getItem('mahjong3d') === '1';
+  cb.addEventListener('change', () => localStorage.setItem('mahjong3d', cb.checked ? '1' : '0'));
+})();
+
 function showLobby() {
   $('room-code-display').textContent = myCode;
   $('section-join').classList.add('hidden');
@@ -137,7 +163,36 @@ function updateHostControls() {
   $('match-length-row').classList.toggle('hidden', !isHost);
   $('match-length-info').classList.toggle('hidden', isHost);
   $('waiting-hint').classList.toggle('hidden', isHost);
+  $('btn-rules').classList.toggle('hidden', !isHost);   // only the host edits the ruleset
+  if (!isHost) $('rules-panel').classList.add('hidden');
 }
+
+// ── Scoring rules editor ─────────────────────────────────────────────────────
+let rulesEditor = null, currentRuleset = null, rulesEditorSeeded = false, setRulesetTimer = null;
+const MODE_LABEL = { 'hk-doubling': 'HK Doubling', 'hk-grouped': 'HK Grouped', 'mcr-additive': 'MCR Additive' };
+function renderRulesSummary(rs) {
+  if (rs) $('rules-summary').textContent = `Scoring: ${rs.name || 'Custom'} · ${MODE_LABEL[rs.mode] || rs.mode}`;
+}
+(async function initRulesEditor() {
+  try {
+    const catalog = await fetch('/api/catalog').then(r => r.json());
+    rulesEditor = window.createRulesetEditor($('rules-editor'), catalog, currentRuleset || catalog.presets['hk-standard'], rs => {
+      currentRuleset = rs;
+      renderRulesSummary(rs);
+      clearTimeout(setRulesetTimer);
+      setRulesetTimer = setTimeout(() => { if (isHost) socket.emit('setRuleset', { ruleset: rs }); }, 250);
+    });
+    socket.emit('listRulesets');
+  } catch (_) { /* editor is optional UI */ }
+})();
+$('btn-rules').addEventListener('click', () => $('rules-panel').classList.toggle('hidden'));
+$('btn-save-ruleset').addEventListener('click', () => {
+  if (!rulesEditor) return;
+  const name = prompt('Save this ruleset to your account as:');
+  if (name) socket.emit('saveRuleset', { name, ruleset: rulesEditor.getRuleset() });
+});
+socket.on('rulesetSaved', res => { $('rules-save-msg').textContent = res.ok ? '✓ Saved to your account.' : (res.error || 'Could not save.'); });
+socket.on('rulesetList', res => { if (rulesEditor && res.ok) rulesEditor.setSavedPresets(res.rulesets || []); });
 
 // Auto-rejoin if we already belong to a room (e.g. back from game page).
 // Reads sessionStorage fresh on every (re)connect so creds are never stale.
@@ -157,7 +212,7 @@ socket.on('rejoined', ({ code, playerIndex, isHost: host, state }) => {
   myIndex = playerIndex;
   isHost = host;
   saveSession();
-  if (state === 'playing') { window.location.href = '/game.html'; return; }
+  if (state === 'playing') { window.location.href = gamePage(); return; }
   showLobby();
 });
 
@@ -290,6 +345,14 @@ socket.on('roomUpdate', (room) => {
   $('match-length').value = String(mr);
   $('match-length-info').textContent = `Match: ${MATCH_LABELS[mr]}`;
 
+  if (room.ruleset) {
+    currentRuleset = room.ruleset;
+    renderRulesSummary(room.ruleset);
+    // Reflect the room's ruleset in the editor — for everyone on first sight, and
+    // for non-hosts always; never clobber the host mid-edit after they've seeded.
+    if (rulesEditor && (!isHost || !rulesEditorSeeded)) { rulesEditor.setRuleset(room.ruleset); rulesEditorSeeded = true; }
+  }
+
   if (isHost) {
     $('btn-start').disabled = room.players.length < 4;
     $('btn-start').textContent = room.players.length < 4 ? `Need 4 players (${room.players.length}/4)` : 'Start Game';
@@ -299,7 +362,7 @@ socket.on('roomUpdate', (room) => {
 
 socket.on('gameStarted', () => {
   saveSession();
-  window.location.href = '/game.html';
+  window.location.href = gamePage();
 });
 
 socket.on('leftRoom', () => {

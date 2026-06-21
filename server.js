@@ -5,7 +5,9 @@ const { Server } = require('socket.io');
 const path = require('path');
 const { createDeck, shuffle, sortTiles, checkWin, getValidClaims } = require('./mahjong');
 const { pickBotName, chooseDiscard, findConcealedKong, decideClaim } = require('./bot');
-const { scoreWin, computePayments } = require('./scoring');
+const { scoreWin, computePayments, analyzeWait } = require('./scoring');
+const { sanitizeRuleset, PRESETS } = require('./rulesets');
+const { probeScore } = require('./probe');
 const accounts = require('./accounts');
 accounts.open(); // create/open the SQLite account store (data/mahjong.db)
 
@@ -18,6 +20,36 @@ app.use(express.static(path.join(__dirname, 'public')));
 // (required by the server too), not under public/.
 app.get('/mahjong.js', (req, res) => res.sendFile(path.join(__dirname, 'mahjong.js')));
 
+// Scoring-rules catalogue for the lobby editor + sandbox: pattern metadata,
+// built-in presets, and the payout modes. `allowFlag` marks patterns gated by
+// the ruleset's `allow.*` flags (special / knitted hands) rather than
+// `patterns[id].enabled`. Static for the process lifetime.
+const { PATTERNS: PATTERN_LIB } = require('./scoring');
+const PATTERN_CATALOG = [
+  ...PATTERN_LIB.map(p => ({
+    id: p.id, name: p.name, cn: p.cn, mcrRef: p.mcrRef ?? null,
+    mcrPoints: p.mcrPoints ?? 0, hkFaan: p.hkFaan ?? 0,
+    defaultEnabled: p.defaultEnabled !== false, limit: !!p.limit, ctxOnly: !!p.ctxOnly,
+  })),
+  { id: 'seven-pairs', name: 'Seven Pairs', cn: '七對', mcrRef: 19, mcrPoints: 24, hkFaan: 4, defaultEnabled: true, allowFlag: 'sevenPairs', special: true },
+  { id: 'thirteen-orphans', name: 'Thirteen Orphans', cn: '十三幺', mcrRef: 7, mcrPoints: 88, hkFaan: 13, defaultEnabled: true, allowFlag: 'thirteenOrphans', special: true },
+  { id: 'greater-knitted', name: 'Greater Honours & Knitted', cn: '七星不靠', mcrRef: 20, mcrPoints: 24, hkFaan: 10, defaultEnabled: false, allowFlag: 'greaterKnitted', knitted: true },
+  { id: 'lesser-knitted', name: 'Lesser Honours & Knitted', cn: '全不靠', mcrRef: 34, mcrPoints: 12, hkFaan: 6, defaultEnabled: false, allowFlag: 'lesserKnitted', knitted: true },
+  { id: 'knitted-straight', name: 'Knitted Straight', cn: '組合龍', mcrRef: 35, mcrPoints: 12, hkFaan: 6, defaultEnabled: false, allowFlag: 'knittedStraight', knitted: true },
+];
+const CATALOG = {
+  patterns: PATTERN_CATALOG,
+  presets: PRESETS,
+  modes: [
+    { id: 'hk-doubling', name: 'HK Doubling', desc: 'points = base × 2^faan, capped at the limit' },
+    { id: 'hk-grouped', name: 'HK Grouped', desc: 'faan compressed into tiers, then base × 2^tier' },
+    { id: 'mcr-additive', name: 'MCR Additive', desc: 'sum of points, 8-point minimum, MCR payments' },
+  ],
+};
+app.get('/api/catalog', (req, res) => res.json(CATALOG));
+// Canonical example hands (shared with the test suite) for the sandbox.
+app.get('/canonical-examples.js', (req, res) => res.sendFile(path.join(__dirname, 'canonical-examples.js')));
+
 const rooms = {};
 const WINDS = ['east', 'south', 'west', 'north'];
 
@@ -28,6 +60,35 @@ const SCORING = {
   limitFaan: Number(process.env.LIMIT_FAAN) || 13,
   basePoints: Number(process.env.BASE_POINTS) || 1,
 };
+
+// Each room starts on HK Standard (carrying any env-var overrides so existing
+// deployments keep their tuning). Hosts can swap/retune it in the lobby; once a
+// match starts it is locked. A fresh sanitized copy is handed to every room.
+const defaultRuleset = () => sanitizeRuleset({
+  id: 'hk-standard',
+  hk: { minFaan: SCORING.minFaan, limitFaan: SCORING.limitFaan, basePoints: SCORING.basePoints },
+});
+
+// Mode-aware "below the minimum" message for a rejected win.
+function winFloorMessage(ruleset, score) {
+  if (ruleset.mode === 'mcr-additive') return `Not enough points to win (${score.value}/${ruleset.mcr.minPoints}).`;
+  return `Not enough faan to win (${score.faan}/${ruleset.hk.minFaan}).`;
+}
+
+// Replay the ephemeral first-person scene state (head looks + interactable props)
+// to a single (re)joining socket via the same events live updates use, so a
+// late-joiner sees current head orientations / prop states instead of defaults.
+// Looks skip the joiner's own seat. The 2D client ignores these events and the
+// 3D prop handler is a no-op until props ship, so this is forward-compatible.
+function sendSceneSnapshot(socket, room, selfIndex) {
+  if (!room) return;
+  room.players.forEach((p, i) => {
+    if (i === selfIndex || !p.look) return;
+    if (!Number.isFinite(p.look.yaw) || !Number.isFinite(p.look.pitch)) return;
+    socket.emit('playerLook', { playerIndex: i, yaw: p.look.yaw, pitch: p.look.pitch });
+  });
+  for (const key in (room.props || {})) socket.emit('interactState', room.props[key]);
+}
 
 const CLAIM_WINDOW_MS = 8000; // claim & rob response window (ms)
 
@@ -50,6 +111,7 @@ function publicRoom(room) {
     roundWind: WINDS[room.roundWind || 0],
     dealer: room.dealer || 0,
     matchRounds: room.matchRounds || 4,
+    ruleset: room.ruleset,
     players: room.players.map(p => ({
       name: p.name,
       seatWind: p.seatWind,
@@ -92,6 +154,7 @@ function gameStateFor(room, playerIndex) {
     dealerStreak: room.dealerStreak || 0,
     matchRounds: room.matchRounds || 4,
     robKong: g.robKong ? { seat: g.robKong.seat, tile: g.robKong.tile } : null,
+    ruleset: room.ruleset,
   };
 }
 
@@ -145,7 +208,9 @@ function drawFlowers(room, playerIndex) {
 function drawReplacement(room, playerIndex) {
   const g = room.game;
   if (g.wall.length === 0) return;
-  room.players[playerIndex].hand.push(g.wall.pop());
+  const tile = g.wall.pop();
+  room.players[playerIndex].hand.push(tile);
+  g.lastDraw = { seat: playerIndex, tile };
   drawFlowers(room, playerIndex);
   g.kongReplacement = playerIndex;
 }
@@ -162,7 +227,8 @@ function startGame(room) {
   for (let r = 0; r < 13; r++)
     for (let i = 0; i < n; i++)
       room.players[i].hand.push(wall.pop());
-  room.players[room.dealer].hand.push(wall.pop());
+  const dealerTile = wall.pop();
+  room.players[room.dealer].hand.push(dealerTile);
 
   room.game = {
     wall,
@@ -171,6 +237,7 @@ function startGame(room) {
     phase: 'discard', // dealer already has 14
     lastDiscard: null,
     lastDiscardPlayer: null,
+    lastDraw: { seat: room.dealer, tile: dealerTile }, // most recent draw (for wait/last-tile analysis)
     claimDeadline: null,
     claimTimeout: null,
     claims: {},
@@ -298,7 +365,9 @@ function advanceTurn(room) {
   }
 
   const p = room.players[g.currentTurn];
-  p.hand.push(g.wall.pop());
+  const drawn = g.wall.pop();
+  p.hand.push(drawn);
+  g.lastDraw = { seat: g.currentTurn, tile: drawn };
   drawFlowers(room, g.currentTurn);
   g.phase = 'discard';
   g.lastDiscard = null;
@@ -321,10 +390,10 @@ function processClaims(room) {
     const [winKey, winClaim] = winEntries[0];
     const pi = parseInt(winKey);
     const p = room.players[pi];
-    const score = winClaim.score || scoreWin(ronContext(room, pi), SCORING);
+    const score = winClaim.score || scoreWin(ronContext(room, pi), room.ruleset);
     p.hand.push(g.lastDiscard);
     g.discardPile.pop();
-    const payments = computePayments(score, pi, room.players.length, false, g.lastDiscardPlayer, SCORING);
+    const payments = computePayments(score, pi, room.players.length, false, g.lastDiscardPlayer, room.ruleset);
     endGame(room, {
       type: 'ron', winner: pi, winnerName: p.name, score, payments,
       discarder: g.lastDiscardPlayer, discarderName: room.players[g.lastDiscardPlayer].name,
@@ -398,9 +467,32 @@ function processClaims(room) {
 
 // ── Scoring helpers ──────────────────────────────────────────────────────────
 
-// Build a scoreWin() context. `hand` must already include the winning tile.
-function winContext(room, winnerIndex, hand, selfDraw) {
+// Count publicly-visible copies of a tile's kind (discards + exposed melds,
+// excluding face-down concealed kongs and the winning tile itself) — for 和絕張.
+function countVisibleCopies(room, tile, winnerIndex) {
+  const g = room.game;
+  const match = t => t && t.suit === tile.suit && t.value === tile.value && t.id !== tile.id;
+  let n = 0;
+  for (const t of g.discardPile) if (match(t)) n++;
+  for (const pl of room.players) {
+    for (const m of pl.melds) {
+      if (m.type === 'concealed-kong') continue; // face-down, not public
+      for (const t of m.tiles) if (match(t)) n++;
+    }
+  }
+  return n;
+}
+
+// Build a scoreWin() context. `hand` already includes the winning tile;
+// `winningTile` identifies which tile completed the hand (for wait shape,
+// last-of-kind and melded-hand).
+function winContext(room, winnerIndex, hand, selfDraw, winningTile) {
   const p = room.players[winnerIndex];
+  const ruleset = room.ruleset;
+  const hand13 = winningTile ? hand.filter(t => t.id !== winningTile.id) : hand;
+  const wait = winningTile
+    ? analyzeWait(hand13.filter(t => t.suit !== 'flower'), p.melds, winningTile, ruleset)
+    : { single: false, shape: null };
   return {
     hand,
     melds: p.melds,
@@ -410,24 +502,31 @@ function winContext(room, winnerIndex, hand, selfDraw) {
     flowers: p.flowers,
     lastTile: room.game.wall.length === 0,
     kongReplacement: selfDraw && room.game.kongReplacement === winnerIndex,
+    winningTile,
+    wait,
+    lastOfKind: winningTile ? countVisibleCopies(room, winningTile, winnerIndex) === 3 : false,
+    meldedHand: !selfDraw && !!winningTile && p.melds.length === 4
+      && p.melds.every(m => m.type !== 'concealed-kong')
+      && wait.single && wait.shape === 'pair',
+    ruleset,
   };
 }
-const ronContext = (room, i) => winContext(room, i, [...room.players[i].hand, room.game.lastDiscard], false);
-const selfDrawContext = (room, i) => winContext(room, i, room.players[i].hand, true);
+const ronContext = (room, i) => winContext(room, i, [...room.players[i].hand, room.game.lastDiscard], false, room.game.lastDiscard);
+const selfDrawContext = (room, i) => winContext(room, i, room.players[i].hand, true, room.game.lastDraw ? room.game.lastDraw.tile : null);
 // Robbing the kong: winner takes the tile a player just added to an exposed pong.
 function robContext(room, i) {
-  const ctx = winContext(room, i, [...room.players[i].hand, room.game.robKong.tile], false);
+  const ctx = winContext(room, i, [...room.players[i].hand, room.game.robKong.tile], false, room.game.robKong.tile);
   ctx.robbingKong = true;
   return ctx;
 }
 
-// End the game on a self-draw, if the hand meets the faan minimum. Returns
+// End the game on a self-draw, if the hand meets the win minimum. Returns
 // whether the win was awarded (false = below minimum, keep playing).
 function finishSelfDraw(room, playerIndex) {
-  const score = scoreWin(selfDrawContext(room, playerIndex), SCORING);
-  if (score.faan < SCORING.minFaan) return false;
+  const score = scoreWin(selfDrawContext(room, playerIndex), room.ruleset);
+  if (!score.legal) return false;
   const p = room.players[playerIndex];
-  const payments = computePayments(score, playerIndex, room.players.length, true, null, SCORING);
+  const payments = computePayments(score, playerIndex, room.players.length, true, null, room.ruleset);
   endGame(room, { type: 'tsumo', winner: playerIndex, winnerName: p.name, score, payments });
   return true;
 }
@@ -466,11 +565,11 @@ function resolveRob(room) {
     const [robKey, robClaim] = robEntries[0];
     const pi = parseInt(robKey);
     const robber = room.players[pi];
-    const score = robClaim.score || scoreWin(robContext(room, pi), SCORING);
+    const score = robClaim.score || scoreWin(robContext(room, pi), room.ruleset);
     // Move the added tile from the declarer to the robber.
     room.players[declarer].hand = room.players[declarer].hand.filter(t => t.id !== tile.id);
     robber.hand.push(tile);
-    const payments = computePayments(score, pi, room.players.length, false, declarer, SCORING);
+    const payments = computePayments(score, pi, room.players.length, false, declarer, room.ruleset);
     g.robKong = null;
     endGame(room, {
       type: 'ron', winner: pi, winnerName: robber.name, score, payments,
@@ -531,10 +630,10 @@ function registerClaim(room, playerIndex, type, tileIds) {
   if (g.phase === 'rob') {
     if (type !== 'win' || !g.robKong || playerIndex === g.robKong.seat) return;
     const p = room.players[playerIndex];
-    if (!checkWin([...p.hand, g.robKong.tile], p.melds)) return;
-    const score = scoreWin(robContext(room, playerIndex), SCORING);
-    if (score.faan < SCORING.minFaan) {
-      if (p.socketId) io.to(p.socketId).emit('actionError', `Not enough faan to rob (${score.faan}/${SCORING.minFaan}).`);
+    if (!checkWin([...p.hand, g.robKong.tile], p.melds, room.ruleset)) return;
+    const score = scoreWin(robContext(room, playerIndex), room.ruleset);
+    if (!score.legal) {
+      if (p.socketId) io.to(p.socketId).emit('actionError', winFloorMessage(room.ruleset, score));
       registerPass(room, playerIndex); // treat as a pass so the rob window can resolve
       return;
     }
@@ -547,13 +646,13 @@ function registerClaim(room, playerIndex, type, tileIds) {
 
   const p = room.players[playerIndex];
   const isNext = (g.lastDiscardPlayer + 1) % room.players.length === playerIndex;
-  const valid = getValidClaims(p.hand, p.melds, g.lastDiscard, isNext);
+  const valid = getValidClaims(p.hand, p.melds, g.lastDiscard, isNext, room.ruleset);
   if (!valid.includes(type)) return;
 
   if (type === 'win') {
-    const score = scoreWin(ronContext(room, playerIndex), SCORING);
-    if (score.faan < SCORING.minFaan) {
-      if (p.socketId) io.to(p.socketId).emit('actionError', `Not enough faan to win (${score.faan}/${SCORING.minFaan}).`);
+    const score = scoreWin(ronContext(room, playerIndex), room.ruleset);
+    if (!score.legal) {
+      if (p.socketId) io.to(p.socketId).emit('actionError', winFloorMessage(room.ruleset, score));
       registerPass(room, playerIndex); // treat a below-minimum win attempt as a pass so the window still resolves
       return;
     }
@@ -640,7 +739,7 @@ function botTakeTurn(room, playerIndex) {
   const g = room.game;
   const p = room.players[playerIndex];
 
-  if (checkWin(p.hand, p.melds) && finishSelfDraw(room, playerIndex)) return;
+  if (checkWin(p.hand, p.melds, room.ruleset) && finishSelfDraw(room, playerIndex)) return;
 
   const kongTile = findConcealedKong(p.hand);
   if (kongTile && g.wall.length > 0) {
@@ -660,7 +759,7 @@ function botRespondClaim(room, playerIndex) {
   const g = room.game;
   const p = room.players[playerIndex];
   const isNext = (g.lastDiscardPlayer + 1) % room.players.length === playerIndex;
-  const decision = decideClaim(p.hand, p.melds, g.lastDiscard, isNext, p.difficulty);
+  const decision = decideClaim(p.hand, p.melds, g.lastDiscard, isNext, p.difficulty, room.ruleset);
   if (decision) registerClaim(room, playerIndex, decision.type, decision.tileIds);
   else registerPass(room, playerIndex);
 }
@@ -668,7 +767,7 @@ function botRespondClaim(room, playerIndex) {
 function botRespondRob(room, playerIndex) {
   const g = room.game;
   const p = room.players[playerIndex];
-  if (g.robKong && checkWin([...p.hand, g.robKong.tile], p.melds)) {
+  if (g.robKong && checkWin([...p.hand, g.robKong.tile], p.melds, room.ruleset)) {
     registerClaim(room, playerIndex, 'win');
   } else {
     registerPass(room, playerIndex);
@@ -729,6 +828,32 @@ io.on('connection', (socket) => {
   });
   socket.on('logout', ({ token } = {}) => { if (token) accounts.logout(token); socket.data.account = null; });
 
+  // ── Saved rulesets (logged-in users) ─────────────────────────────────────────
+  socket.on('listRulesets', () => {
+    const acct = socket.data.account;
+    if (!acct) return socket.emit('rulesetList', { ok: false, error: 'Log in to use saved rulesets.', rulesets: [] });
+    socket.emit('rulesetList', { ok: true, rulesets: accounts.listRulesets(acct.username) });
+  });
+  socket.on('saveRuleset', ({ name, ruleset } = {}) => {
+    const acct = socket.data.account;
+    if (!acct) return socket.emit('rulesetSaved', { ok: false, error: 'Log in to save rulesets.' });
+    const res = accounts.saveRuleset(acct.username, name, JSON.stringify(sanitizeRuleset(ruleset)));
+    socket.emit('rulesetSaved', res);
+    if (res.ok) socket.emit('rulesetList', { ok: true, rulesets: accounts.listRulesets(acct.username) });
+  });
+  socket.on('deleteRuleset', ({ id } = {}) => {
+    const acct = socket.data.account;
+    if (!acct) return;
+    accounts.deleteRuleset(acct.username, id);
+    socket.emit('rulesetList', { ok: true, rulesets: accounts.listRulesets(acct.username) });
+  });
+
+  // Stateless scoring probe for the ruleset sandbox.
+  socket.on('scoreProbe', ({ ruleset, ctx } = {}) => {
+    try { socket.emit('scoreProbeResult', probeScore(ruleset, ctx)); }
+    catch (e) { socket.emit('scoreProbeResult', { error: 'Could not score that hand.' }); }
+  });
+
   socket.on('createRoom', ({ playerName }) => {
     let code;
     do { code = genCode(); } while (rooms[code]);
@@ -737,7 +862,7 @@ io.on('connection', (socket) => {
     const acct = socket.data.account || null;
     const name = acct ? acct.name : ((playerName || 'Player').trim().slice(0, 20) || 'Player');
     const player = { socketId: socket.id, token, name, account: acct ? acct.username : null, seatWind: 'east', hand: [], melds: [], flowers: [], connected: true, isBot: false, points: 0 };
-    rooms[code] = { code, players: [player], state: 'waiting', game: null, cleanupTimer: null, dealer: 0, roundWind: 0, dealerPasses: 0, lastResult: null, chat: [], matchRounds: 4, handNumber: 0, dealerStreak: 0, matchOver: false, endVotes: new Set() };
+    rooms[code] = { code, players: [player], state: 'waiting', game: null, cleanupTimer: null, dealer: 0, roundWind: 0, dealerPasses: 0, lastResult: null, chat: [], matchRounds: 4, handNumber: 0, dealerStreak: 0, matchOver: false, endVotes: new Set(), ruleset: defaultRuleset() };
     socket.join(code);
     socket.data.code = code; socket.data.playerIndex = 0;
     socket.emit('roomCreated', { code, playerIndex: 0, token });
@@ -783,6 +908,7 @@ io.on('connection', (socket) => {
     socket.emit('chatHistory', room.chat);
     io.to(c).emit('roomUpdate', publicRoom(room));
     if (room.game) socket.emit('gameUpdate', gameStateFor(room, playerIndex));
+    sendSceneSnapshot(socket, room, playerIndex);
   });
 
   socket.on('addBot', ({ difficulty } = {}) => {
@@ -852,6 +978,15 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Host sets the room's scoring ruleset (only while waiting; locked at start).
+  socket.on('setRuleset', ({ ruleset } = {}) => {
+    const { code, playerIndex } = socket.data || {};
+    const room = rooms[code];
+    if (!room || playerIndex !== 0 || room.state !== 'waiting') return;
+    room.ruleset = sanitizeRuleset(ruleset);
+    io.to(code).emit('roomUpdate', publicRoom(room));
+  });
+
   socket.on('discard', ({ tileId }) => {
     const { code, playerIndex } = socket.data || {};
     const room = rooms[code];
@@ -892,8 +1027,8 @@ io.on('connection', (socket) => {
     if (g.phase !== 'discard' || g.currentTurn !== playerIndex) return;
 
     const p = room.players[playerIndex];
-    if (checkWin(p.hand, p.melds) && !finishSelfDraw(room, playerIndex)) {
-      socket.emit('actionError', `Not enough faan to win (need ${SCORING.minFaan}).`);
+    if (checkWin(p.hand, p.melds, room.ruleset) && !finishSelfDraw(room, playerIndex)) {
+      socket.emit('actionError', winFloorMessage(room.ruleset, scoreWin(selfDrawContext(room, playerIndex), room.ruleset)));
     }
   });
 
@@ -942,6 +1077,7 @@ io.on('connection', (socket) => {
       socket.emit('roomUpdate', publicRoom(room));
       socket.emit('chatHistory', room.chat);
       if (room.game) socket.emit('gameUpdate', gameStateFor(room, playerIndex));
+      sendSceneSnapshot(socket, room, playerIndex);
     }
   });
 
@@ -986,6 +1122,37 @@ io.on('connection', (socket) => {
     room.endVotes = new Set();
     io.to(code).emit('roomUpdate', publicRoom(room));
     io.to(code).emit('backToLobby');
+  });
+
+  // ── Ephemeral first-person relays (additive; no game-logic impact, so the
+  //    turn-based protocol and test/e2e.js are unaffected) ──────────────────────
+  // Head look-direction, broadcast ~20 Hz to the rest of the room for avatar
+  // head-sync in the 3D client. Last value is stored for late joiners.
+  socket.on('playerLook', ({ yaw, pitch } = {}) => {
+    const { code, playerIndex } = socket.data || {};
+    const room = rooms[code];
+    if (!room || playerIndex === undefined || !room.players[playerIndex]) return;
+    if (!Number.isFinite(yaw) || !Number.isFinite(pitch)) return; // drop malformed look packets (NaN/strings)
+    room.players[playerIndex].look = { yaw, pitch };
+    socket.to(code).emit('playerLook', { playerIndex, yaw, pitch });
+  });
+
+  // Interactable prop state (e.g. teacup/lamp); relayed and stored on the room
+  // so a joiner/rejoiner can be sent the current state (see PROP_SNAPSHOT below).
+  const MAX_ROOM_PROPS = 64;
+  socket.on('interactState', (data = {}) => {
+    const { code, playerIndex } = socket.data || {};
+    const room = rooms[code];
+    if (!room || playerIndex === undefined) return;
+    if (!data || typeof data !== 'object' || typeof data.object !== 'string') return;
+    // Null-proto map: inherited names (constructor/toString/__proto__/…) can't
+    // bypass the `in` cap check or hit a prototype setter.
+    const props = room.props || (room.props = Object.create(null));
+    if (!(data.object in props) && Object.keys(props).length >= MAX_ROOM_PROPS) return; // bound the stored set
+    // Server owns playerIndex (placed last so a client-supplied one can't spoof it).
+    const payload = { ...data, playerIndex };
+    props[data.object] = payload;
+    socket.to(code).emit('interactState', payload);
   });
 
   socket.on('disconnect', () => {

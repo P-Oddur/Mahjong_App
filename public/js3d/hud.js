@@ -282,7 +282,7 @@ function renderActions(store) {
   // ── My own discard turn: Win / Discard / concealed-kong / added-kong ──
   if (s.phase === 'discard' && s.currentTurn === myIndex && me.hand) {
     // Self-draw win (tsumo).
-    if (checkWin(me.hand, me.melds)) {
+    if (checkWin(me.hand, me.melds, s.ruleset)) {
       el.selfPanel.appendChild(actionButton('🏆 Win!', 'win', () => {
         net.emitDeclareWin();
       }));
@@ -328,7 +328,7 @@ function renderActions(store) {
   if (s.phase === 'claim' && s.lastDiscardPlayer !== myIndex && !store.claimResponded && me.hand) {
     const n = s.players.length;
     const isNext = (s.lastDiscardPlayer + 1) % n === myIndex;
-    const claims = getValidClaims(me.hand, me.melds, s.lastDiscard, isNext);
+    const claims = getValidClaims(me.hand, me.melds, s.lastDiscard, isNext, s.ruleset);
 
     claims.forEach(type => {
       if (type === 'chow') {
@@ -359,7 +359,7 @@ function renderActions(store) {
 
   // ── Rob-the-kong window ──
   if (s.phase === 'rob' && s.robKong && s.robKong.seat !== myIndex && !store.claimResponded && me.hand) {
-    if (checkWin([...me.hand, s.robKong.tile], me.melds)) {
+    if (checkWin([...me.hand, s.robKong.tile], me.melds, s.ruleset)) {
       el.claimPanel.appendChild(actionButton('🏆 Rob!', 'win', () => {
         net.emitClaim('win', []);
         respond();
@@ -544,10 +544,12 @@ function renderScoreDetail(result) {
   if (score) {
     const head = document.createElement('div');
     head.className = 'hud-score-head';
-    head.innerHTML =
-      `<span class="hud-score-faan">${score.faan} 番</span>` +
-      (score.isLimit ? '<span class="hud-score-limit">LIMIT</span>' : '') +
-      `<span class="hud-score-points">${score.points} pts</span>`;
+    // MCR additive has no faan — its value IS points; HK modes show 番 → pts.
+    head.innerHTML = score.mode === 'mcr-additive'
+      ? `<span class="hud-score-faan">${score.value} pts</span>`
+      : `<span class="hud-score-faan">${score.faan} 番</span>` +
+        (score.isLimit ? '<span class="hud-score-limit">LIMIT</span>' : '') +
+        `<span class="hud-score-points">${score.points} pts</span>`;
     root.appendChild(head);
 
     if (score.breakdown && score.breakdown.length) {
@@ -558,7 +560,7 @@ function renderScoreDetail(result) {
         const li = document.createElement('li');
         li.innerHTML =
           `<span>${escapeHtml(b.name)}${cnt} <span class="hud-score-cn">${escapeHtml(b.cn)}</span></span>` +
-          `<span class="hud-score-b-faan">${b.limit ? 'LIMIT' : '+' + b.faan}</span>`;
+          `<span class="hud-score-b-faan">${b.limit ? 'LIMIT' : '+' + (b.points != null ? b.points : b.faan)}</span>`;
         ul.appendChild(li);
       });
       root.appendChild(ul);

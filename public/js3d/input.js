@@ -201,7 +201,7 @@ export function computeAffordances(s) {
   // ── Own discard turn: self-win / concealed kong / added kong / discard ──
   if (gs.phase === 'discard' && gs.currentTurn === myIndex && hand) {
     // Self-draw win (tsumo) — declareWin.
-    if (checkWin(hand, melds)) result.canSelfWin = true;
+    if (checkWin(hand, melds, gs.ruleset)) result.canSelfWin = true;
 
     // Concealed kong: any suit:value group of length 4 in hand -> group[0].id.
     const groups = {};
@@ -224,7 +224,7 @@ export function computeAffordances(s) {
   // ── Claim window (a discard by someone else) ──
   if (gs.phase === 'claim' && gs.lastDiscardPlayer !== myIndex && !s.claimResponded && hand) {
     const isNext = (gs.lastDiscardPlayer + 1) % n === myIndex;
-    const claims = getValidClaims(hand, melds, gs.lastDiscard, isNext);
+    const claims = getValidClaims(hand, melds, gs.lastDiscard, isNext, gs.ruleset);
     result.claimWindow.active = true;
     result.claimWindow.isNext = isNext;
     result.claimWindow.claims = claims;
@@ -241,7 +241,7 @@ export function computeAffordances(s) {
   // ── Rob-the-kong window (someone is adding a kong; anyone else may win) ──
   if (gs.phase === 'rob' && gs.robKong && gs.robKong.seat !== myIndex && !s.claimResponded && hand) {
     result.robWindow.active = true;
-    result.robWindow.canWin = checkWin([...hand, gs.robKong.tile], melds);
+    result.robWindow.canWin = checkWin([...hand, gs.robKong.tile], melds, gs.ruleset);
   }
 
   return result;
