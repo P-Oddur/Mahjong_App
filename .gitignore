@@ -12,6 +12,8 @@ tools/release.js
 public/tiles-preview.html
 # Action-indicator / claim-window prototype (local only)
 public/indicator-preview.html
+# Local Claude Code settings (machine-specific)
+.claude/
 
 # Logs and OS cruft
 *.log
