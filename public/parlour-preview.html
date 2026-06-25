@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Parlour Preview (dev)</title>
+  <link rel="icon" href="data:,">
+
+  <!-- Three.js r0.184.0 via jsdelivr import map (no build step). Modules under
+       /js3d resolve `three` and `three/addons/` against these URLs.
+       WebGPU build: `three` resolves to three.webgpu.js (exposes THREE.WebGPURenderer);
+       three/webgpu and three/tsl aliases satisfy any direct imports of those paths. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.webgpu.js",
+      "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.webgpu.js",
+      "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.tsl.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #0a0a0c; color: #f0e9d8;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      -webkit-user-select: none; user-select: none;
+    }
+    /* Full-screen render target — same id as game3d.html. */
+    #game3d-canvas {
+      position: fixed; inset: 0;
+      width: 100%; height: 100%;
+      display: block; touch-action: none;
+    }
+    /* Dev label so it's obvious this is the preview, not the live client. */
+    #dev-label {
+      position: fixed; top: 10px; left: 10px;
+      z-index: 20;
+      font-size: 0.75rem; letter-spacing: 1px;
+      color: rgba(240, 193, 64, 0.7);
+      pointer-events: none;
+    }
+    /* Loading splash. */
+    #loading {
+      position: fixed; inset: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 12px;
+      background: #0a0a0c; color: #f0c040;
+      font-size: 1.1rem; letter-spacing: 2px;
+    }
+    #loading.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <!-- Full-screen render target (same id as game3d.html). -->
+  <canvas id="game3d-canvas"></canvas>
+
+  <div id="dev-label">PARLOUR PREVIEW — dev only · click to free-look</div>
+
+  <div id="loading"><div>Loading parlour…</div></div>
+
+  <!--
+    Socket-free preview harness for visual iteration on the Neon Parlour port.
+    Imports only the scene/camera modules (no net.js / state.js / session guard).
+    input.js cannot be imported here because it transitively pulls in state.js and
+    interact.js (live-session dependencies), so pointer-lock mouse-look is wired
+    directly in this inline module using the same deltas and camera.setLook() API
+    that input.js itself uses.
+  -->
+  <script type="module">
+    import * as THREE    from 'three';
+    import * as scene    from '/js3d/scene.js';
+    import * as camera   from '/js3d/camera.js';
+    import * as interact from '/js3d/interact.js';
+
+    const canvas  = document.getElementById('game3d-canvas');
+    const loading = document.getElementById('loading');
+
+    // ── Build scene + camera ──────────────────────────────────────────────────
+    await scene.buildScene(canvas);
+
+    const cam = camera.createCamera();
+    camera.seatCamera(cam, 0);   // pin to relative seat 0 (near side), faces centre
+
+    // ── Interactable toys (Task 5) ────────────────────────────────────────────
+    // Wire the same interact.js the live client uses. interact.js imports net.js,
+    // which is socket-free here (io() only runs inside connect()), so emit is a
+    // harmless no-op — this lets us verify dice/shrine/tubes/OPEN-sign with no game.
+    interact.initInteractables(scene.scene);
+
+    // Center-screen reticle raycaster (mirrors input.js: NDC (0,0) = dead center).
+    const raycaster  = new THREE.Raycaster();
+    const reticleNdc = new THREE.Vector2(0, 0);
+
+    // Track the currently-hovered toy root so we can drive a hover affordance
+    // (cursor change here; the live client toggles userData.reticleHover instead).
+    let hoveredRoot = null;
+
+    // ── Pointer-lock mouse-look (mirrors input.js MOUSE_SENSITIVITY / PITCH_LIMIT)
+    const MOUSE_SENSITIVITY = 0.0022; // radians per pixel
+    const PITCH_LIMIT       = 1.40;   // ~±80°
+
+    // Click: while pointer-locked, a toy under the reticle consumes the click
+    // (roll/flip/toggle/pulse); otherwise (re)acquire the pointer lock for look.
+    canvas.addEventListener('click', () => {
+      if (document.pointerLockElement === canvas && hoveredRoot) {
+        if (interact.handleReticleClick(hoveredRoot)) return;
+      }
+      if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (document.pointerLockElement !== canvas) return;
+      const { yaw, pitch } = camera.getLook();
+      const nextYaw   = yaw   - e.movementX * MOUSE_SENSITIVITY;
+      const nextPitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT,
+                          pitch - e.movementY * MOUSE_SENSITIVITY));
+      camera.setLook(nextYaw, nextPitch);
+    });
+
+    // ── Resize ────────────────────────────────────────────────────────────────
+    window.addEventListener('resize', () => scene.onResize(cam));
+
+    // ── Render loop ───────────────────────────────────────────────────────────
+    loading.classList.add('hidden');
+
+    function loop() {
+      requestAnimationFrame(loop);
+      const dt = scene.clock ? scene.clock.getDelta() : 0;
+
+      camera.update(dt, cam);
+
+      // Per-frame hover: raycast center-screen and ask interact.js for the tagged
+      // toy root under the reticle. Drive a cursor affordance + reticleHover flag.
+      raycaster.setFromCamera(reticleNdc, cam);
+      const root = interact.objectAtReticle(raycaster);
+      if (root !== hoveredRoot) {
+        if (hoveredRoot && hoveredRoot.userData) hoveredRoot.userData.reticleHover = false;
+        if (root && root.userData) root.userData.reticleHover = true;
+        hoveredRoot = root;
+        canvas.style.cursor = root ? 'pointer' : 'none';
+      }
+
+      scene.updateParlour?.(dt);
+
+      scene.render(cam);
+    }
+    loop();
+  </script>
+</body>
+</html>

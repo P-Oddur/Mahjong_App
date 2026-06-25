@@ -1,0 +1,132 @@
+/* hand-dock.css — shared tile + bottom hand-dock styling for BOTH the 2D client
+   (game.html, linked AFTER style.css) and the 3D client (game3d.html, linked by
+   hud.js). Single source of truth for the tile "card", the unified PNG faces, the
+   CSS tile-back, the flower fallback, the pinned hand dock, and the lift+spread
+   hover popout. Dock layout + hover rules are appended in later tasks. */
+
+:root {
+  --tile-bg: #fffef0;
+  --tile-border: #c8a96e;
+  --tile-back-frame: #f3ead2;
+  --tile-back-panel: #2e7d56;        /* bamboo-green back panel */
+  --tile-back-panel-edge: #1f5e40;
+  --tile-card-shadow: rgba(0,0,0,0.45);
+}
+
+/* ── Tile card ── */
+.tile {
+  position: relative;
+  display: inline-flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  width: 42px; height: 58px;
+  background: var(--tile-bg);
+  border: 2px solid var(--tile-border);
+  border-radius: 6px;
+  box-shadow: 2px 3px 0 var(--tile-card-shadow);
+  user-select: none; flex-shrink: 0; margin: 2px;
+  overflow: hidden;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+  cursor: default;
+}
+.tile.sm { width: 34px; height: 48px; }
+
+/* Unified rendered face image (man/pin/bam/wind/dragon). */
+.tile-face { width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; }
+
+/* Flower / season fallback: colored glyph + label on the ivory body. */
+.tile-glyph { font-size: 26px; line-height: 1; }
+.tile-label { font-size: 9px; font-weight: 700; margin-top: 1px; opacity: 0.7; }
+.tile.sm .tile-glyph { font-size: 22px; }
+.tile.sm .tile-label { font-size: 8px; }
+.tile-flower .tile-glyph, .tile-flower .tile-label { color: var(--flower, #d81b60); }
+
+/* CSS tile-back (face-down): ivory frame around a bamboo-green hatched panel —
+   reads as a real tile flipped over. No glyph, no image. */
+.tile.tile-back { background: var(--tile-back-frame); border-color: var(--tile-border); }
+.tile.tile-back::after {
+  content: ''; position: absolute; inset: 4px; border-radius: 3px;
+  background: repeating-linear-gradient(45deg,
+    var(--tile-back-panel) 0 6px, var(--tile-back-panel-edge) 6px 12px);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,0.18);
+}
+
+/* State modifiers (work for <img>, CSS-back, and flower tiles alike). */
+.tile.clickable { cursor: pointer; }
+.tile.selected {
+  transform: translateY(-12px);
+  box-shadow: 0 14px 0 var(--tile-card-shadow), 0 0 0 2px #4caf50;
+  border-color: #4caf50; z-index: 3;
+}
+.tile.last-discard {
+  box-shadow: 0 0 0 3px var(--gold, #f0c040), 2px 3px 0 var(--tile-card-shadow);
+  animation: tile-pulse 1s infinite;
+}
+@keyframes tile-pulse {
+  0%,100% { box-shadow: 0 0 0 2px var(--gold,#f0c040), 2px 3px 0 var(--tile-card-shadow); }
+  50%     { box-shadow: 0 0 0 4px var(--gold,#f0c040), 2px 3px 0 var(--tile-card-shadow); }
+}
+
+/* ── Hand dock (pinned bottom inventory bar) ── */
+:root { --dock-tile-w: clamp(40px, 5.2vw, 58px); }
+
+.hand-dock {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 4px 12px 10px;
+  background: linear-gradient(to top, rgba(8,10,12,0.94), rgba(8,10,12,0.66));
+  box-shadow: 0 -4px 18px rgba(0,0,0,0.45);
+  flex-shrink: 0; width: 100%;
+}
+/* 'bare' dock (3D HUD, layout:'bare'): just the hand-tile row floating over the scene —
+   no background bar, name, flowers, melds, or controls. The lift+magnify hover and the
+   click-to-discard come from the shared .hand-dock-row rules below. */
+.hand-dock--bare { background: none; box-shadow: none; padding: 0 0 8px; gap: 0; }
+.hand-dock-header {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap; justify-content: center;
+  font-size: 0.85rem; color: #e8e0c8;
+  /* Reserve one tile-row of height up front (a .sm tile is 48px + 4px margin) so the
+     header doesn't grow — and shove the board — the first time flowers/melds appear. */
+  min-height: 52px;
+}
+.hand-dock-id { font-weight: 700; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.hand-dock-melds { display: flex; gap: 6px; }
+.hand-dock-flowers { display: flex; gap: 2px; }
+.hand-dock-controls { display: flex; gap: 8px; }
+.hand-ctrl-btn {
+  font-size: 0.76rem; padding: 4px 12px; border-radius: 7px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.08); color: #e8e8e8;
+}
+.hand-ctrl-btn:hover { background: rgba(255,255,255,0.18); }
+
+/* The hand row: single line; lifted tiles must not be clipped, so the row keeps
+   top headroom and lets tiles overflow upward. */
+.hand-dock-row {
+  display: flex; align-items: flex-end; justify-content: center;
+  gap: 0; padding-top: 28px; max-width: 100%; position: relative;
+}
+.hand-dock-row .tile {
+  width: var(--dock-tile-w); height: calc(var(--dock-tile-w) * 1.38);
+  margin: 0; transform-origin: bottom center;
+}
+.hand-dock-row .tile.just-drawn { margin-left: 22px; box-shadow: 0 0 0 2px var(--gold, #f0c040), 0 2px 8px rgba(0,0,0,0.35); }
+
+/* ── Lift + neighbours-spread hover (identical in 2D + 3D) ──
+   The hovered tile rises and grows from its bottom edge (so it never clips at the
+   screen edge); every neighbour to the right slides right, every neighbour to the
+   left slides left (the left-side rule uses :has()). Driven by the `.is-hover` class
+   that attachSeamlessHover (hand-render.js) sets from the pointer's X over the gapless
+   row — NOT :hover — so the lift/spread transforms can't open a gap under the cursor,
+   letting the mouse travel the whole hand without the hover flickering. */
+.hand-dock-row .tile { will-change: transform; }
+.hand-dock-row .tile.is-hover {
+  transform: translateY(-22px) scale(1.35);
+  box-shadow: 0 18px 30px rgba(0,0,0,0.55);
+  border-color: var(--gold, #f0c040);
+  z-index: 10;
+}
+.hand-dock-row .tile.is-hover ~ .tile { transform: translateX(16px); }
+.hand-dock-row .tile:has(~ .tile.is-hover) { transform: translateX(-16px); }
+/* A selected tile that is a NEIGHBOUR of the hovered tile keeps its raise while it
+   slides aside (compose spread + lift) — these out-specify the spread rules above so
+   the selection's lift survives a neighbour hover instead of dropping to baseline. */
+.hand-dock-row .tile.is-hover ~ .tile.selected { transform: translateX(16px) translateY(-12px); }
+.hand-dock-row .tile.selected:has(~ .tile.is-hover) { transform: translateX(-16px) translateY(-12px); }

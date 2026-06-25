@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scoring Sandbox · Mahjong</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { margin: 0; }
+  .sb-wrap { max-width: 1200px; margin: 0 auto; padding: 16px; color: #f0e9d8; }
+  .sb-top { display: flex; align-items: baseline; gap: 14px; margin-bottom: 12px; }
+  .sb-top h1 { font-size: 1.3rem; margin: 0; color: var(--gold, #f0c040); }
+  .sb-top a { color: #b09a6a; }
+  .sb-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 880px) { .sb-cols { grid-template-columns: 1fr; } }
+  .sb-card { background: rgba(0,0,0,0.28); border: 1px solid rgba(240,192,64,0.25); border-radius: 12px; padding: 12px 14px; }
+  .sb-card h2 { font-size: 0.95rem; margin: 0 0 8px; color: var(--gold, #f0c040); }
+  .palette { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+  .palette button, .hand-chip { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid rgba(240,192,64,0.3); background: #14110d; color: #f0e9d8; padding: 4px 7px; }
+  .palette .sep { width: 100%; height: 0; }
+  .hand-chips { display: flex; flex-wrap: wrap; gap: 4px; min-height: 30px; padding: 6px; background: rgba(0,0,0,0.25); border-radius: 8px; }
+  .hand-chip.win { outline: 2px solid var(--gold, #f0c040); }
+  .ctx-grid { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-top: 8px; font-size: 0.85rem; }
+  .ctx-grid label { display: flex; align-items: center; gap: 5px; }
+  .ctx-grid select, .ctx-grid input[type=number] { background: #14110d; color: #f0e9d8; border: 1px solid rgba(240,192,64,0.3); border-radius: 5px; padding: 2px 4px; }
+  /* Ruleset editor */
+  .rs-editor { font-size: 0.85rem; }
+  .rs-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+  .rs-head { gap: 16px; margin-bottom: 6px; }
+  .rs-cell { display: flex; align-items: center; gap: 4px; }
+  .rs-toggle { flex: 1; }
+  .rs-cn { opacity: 0.6; }
+  .rs-unit { opacity: 0.6; width: 30px; }
+  .rs-valcell { width: 90px; justify-content: flex-end; }
+  .rs-input { background: #14110d; color: #f0e9d8; border: 1px solid rgba(240,192,64,0.3); border-radius: 5px; padding: 3px 5px; }
+  .rs-num { width: 52px; }
+  .rs-globals { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 6px 0; }
+  .rs-glabel { display: flex; flex-direction: column; font-size: 0.78rem; opacity: 0.9; gap: 2px; }
+  .rs-list { max-height: 420px; overflow-y: auto; border-top: 1px solid rgba(240,192,64,0.2); margin-top: 8px; padding-top: 6px; }
+  .rs-tier { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: #b09a6a; margin: 8px 0 2px; }
+  .score-line { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  .score-big { font-size: 1.5rem; font-weight: 800; color: var(--gold, #f0c040); }
+  .score-illegal { color: #e06; font-weight: 700; }
+  .bd { list-style: none; padding: 0; margin: 8px 0; }
+  .bd li { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px dashed rgba(255,255,255,0.08); }
+  .pays { display: flex; gap: 10px; margin-top: 6px; }
+  .pays span { padding: 2px 8px; border-radius: 6px; background: rgba(0,0,0,0.3); }
+  .pos { color: #b6f0a0; } .neg { color: #f0a0a0; }
+  .grid { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+  .grid .cell { font-size: 0.72rem; padding: 3px 6px; border-radius: 5px; }
+  .grid .pass { background: rgba(40,160,80,0.3); } .grid .fail { background: rgba(200,40,40,0.45); }
+  button.act { font: inherit; cursor: pointer; background: var(--gold, #f0c040); color: #14110d; border: 0; border-radius: 7px; padding: 6px 12px; font-weight: 700; }
+  button.ghost { background: transparent; color: #f0e9d8; border: 1px solid rgba(240,192,64,0.4); border-radius: 7px; padding: 6px 12px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="sb-wrap">
+  <div class="sb-top">
+    <h1>⚙ Scoring Sandbox</h1>
+    <a href="/">← back to lobby</a>
+    <span style="opacity:.6">Build a winning hand, pick a ruleset, see the live score.</span>
+  </div>
+  <div class="sb-cols">
+    <div>
+      <div class="sb-card">
+        <h2>Hand</h2>
+        <div class="palette" id="palette"></div>
+        <div class="hand-chips" id="hand"></div>
+        <div class="ctx-grid" id="ctx"></div>
+      </div>
+      <div class="sb-card" style="margin-top:14px">
+        <h2>Result</h2>
+        <div id="result">Add tiles to score.</div>
+      </div>
+      <div class="sb-card" style="margin-top:14px">
+        <h2>Verify the catalogue</h2>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <select id="example" class="rs-input"></select>
+          <button class="ghost" id="loadEx">Load</button>
+          <button class="act" id="runAll">Run all</button>
+        </div>
+        <div class="grid" id="grid"></div>
+      </div>
+    </div>
+    <div class="sb-card">
+      <h2>Ruleset</h2>
+      <div id="editor"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/ruleset-editor.js"></script>
+<script src="/canonical-examples.js"></script>
+<script>
+(async function () {
+  const socket = io();
+  const catalog = await fetch('/api/catalog').then(r => r.json());
+  const $ = id => document.getElementById(id);
+
+  // ── State ──
+  let hand = [];           // [{suit,value}]
+  let flowers = [];
+  let winIdx = -1;         // index into hand of the winning tile
+  let ruleset = JSON.parse(JSON.stringify(catalog.presets['mcr-official']));
+  const ctxFlags = { selfDraw: false, lastTile: false, robbingKong: false, kongReplacement: false, lastOfKind: false, meldedHand: false };
+  let seatWind = 'east', roundWind = 'east', discarderIndex = 1;
+
+  // ── Tile palette ──
+  const LABEL = { east: '東', south: '南', west: '西', north: '北', red: '中', green: '發', white: '白' };
+  function tileLabel(t) {
+    if (t.suit === 'man') return t.value + 'm';
+    if (t.suit === 'pin') return t.value + 'p';
+    if (t.suit === 'bam') return t.value + 'b';
+    if (t.suit === 'flower') return 'F' + t.value;
+    return LABEL[t.value];
+  }
+  function paletteTiles() {
+    const out = [];
+    for (const s of ['man', 'pin', 'bam']) { for (let v = 1; v <= 9; v++) out.push({ suit: s, value: v }); out.push('sep'); }
+    ['east', 'south', 'west', 'north'].forEach(v => out.push({ suit: 'wind', value: v }));
+    ['red', 'green', 'white'].forEach(v => out.push({ suit: 'dragon', value: v }));
+    out.push('sep');
+    for (let v = 1; v <= 8; v++) out.push({ suit: 'flower', value: v });
+    return out;
+  }
+  paletteTiles().forEach(t => {
+    if (t === 'sep') { const s = document.createElement('span'); s.className = 'sep'; $('palette').appendChild(s); return; }
+    const b = document.createElement('button');
+    b.textContent = tileLabel(t);
+    b.onclick = () => { if (t.suit === 'flower') flowers.push(t); else hand.push(t); renderHand(); score(); };
+    $('palette').appendChild(b);
+  });
+
+  function renderHand() {
+    const h = $('hand'); h.innerHTML = '';
+    hand.forEach((t, i) => {
+      const c = document.createElement('span');
+      c.className = 'hand-chip' + (i === winIdx ? ' win' : '');
+      c.textContent = tileLabel(t);
+      c.title = 'click to remove · shift-click to mark winning tile';
+      c.onclick = (e) => {
+        if (e.shiftKey) { winIdx = i; }
+        else {
+          hand.splice(i, 1);
+          if (i === winIdx) winIdx = -1;        // removed the marked winning tile
+          else if (i < winIdx) winIdx--;        // keep winIdx pointing at the same tile
+          if (winIdx >= hand.length) winIdx = -1;
+        }
+        renderHand(); score();
+      };
+      h.appendChild(c);
+    });
+    flowers.forEach((t, i) => {
+      const c = document.createElement('span'); c.className = 'hand-chip'; c.textContent = tileLabel(t);
+      c.onclick = () => { flowers.splice(i, 1); renderHand(); score(); };
+      h.appendChild(c);
+    });
+    if (!hand.length && !flowers.length) h.innerHTML = '<span style="opacity:.5">click tiles above…</span>';
+  }
+
+  // ── Context controls ──
+  function buildCtx() {
+    const c = $('ctx'); c.innerHTML = '';
+    const windSel = (cur, on) => {
+      const s = document.createElement('select');
+      ['east', 'south', 'west', 'north'].forEach(w => { const o = document.createElement('option'); o.value = w; o.textContent = LABEL[w]; s.appendChild(o); });
+      s.value = cur; s.onchange = () => { on(s.value); score(); };
+      return s;
+    };
+    c.append(label('Seat', windSel(seatWind, v => seatWind = v)), label('Round', windSel(roundWind, v => roundWind = v)));
+    Object.keys(ctxFlags).forEach(k => {
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = ctxFlags[k];
+      cb.onchange = () => { ctxFlags[k] = cb.checked; score(); };
+      const l = document.createElement('label'); l.append(cb, document.createTextNode(' ' + k)); c.appendChild(l);
+    });
+    function label(text, node) { const l = document.createElement('label'); l.append(document.createTextNode(text + ' '), node); return l; }
+  }
+
+  // ── Scoring ──
+  let timer = null;
+  function score() {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      socket.emit('scoreProbe', { ruleset, ctx: {
+        hand, flowers, seatWind, roundWind, winningTileIndex: winIdx >= 0 ? winIdx : undefined,
+        discarderIndex, ...ctxFlags,
+      } });
+    }, 120);
+  }
+  socket.on('scoreProbeResult', renderResult);
+
+  function renderResult(res) {
+    if (!res || res.error) { $('result').textContent = res && res.error || 'error'; return; }
+    const s = res.score;
+    const total = s.mode === 'mcr-additive' ? `${s.value} pts` : `${s.faan} faan → ${s.points} pts` + (s.tier ? ` (tier ${s.tier})` : '');
+    const legal = s.legal ? '' : '<span class="score-illegal">below minimum — not a legal win</span>';
+    const rows = (s.breakdown || []).map(b => {
+      const v = b.limit ? 'LIMIT' : (b.points != null ? '+' + b.points : '+' + b.faan) + (b.count ? ` ×${b.count}` : '');
+      return `<li><span>${b.name} <span class="rs-cn">${b.cn || ''}</span></span><span>${v}</span></li>`;
+    }).join('');
+    const pays = res.payments.map((p, i) => `<span class="${p > 0 ? 'pos' : p < 0 ? 'neg' : ''}">P${i}: ${p > 0 ? '+' : ''}${p}</span>`).join('');
+    $('result').innerHTML = `<div class="score-line"><span class="score-big">${total}</span> ${legal}</div>
+      <ul class="bd">${rows || '<li>(no fans)</li>'}</ul><div class="pays">${pays}</div>`;
+  }
+
+  // ── Canonical examples ──
+  const EX = (window.CanonicalExamples || { EXAMPLES: [] }).EXAMPLES;
+  EX.forEach((e, i) => { const o = document.createElement('option'); o.value = i; o.textContent = e.label; $('example').appendChild(o); });
+  $('loadEx').onclick = () => {
+    const e = EX[$('example').value]; if (!e) return;
+    hand = (e.ctx.hand || []).map(t => ({ suit: t.suit, value: t.value }));
+    flowers = (e.ctx.flowers || []).map(t => ({ suit: t.suit, value: t.value }));
+    winIdx = Number.isInteger(e.ctx.winningTileIndex) ? e.ctx.winningTileIndex : -1;
+    Object.keys(ctxFlags).forEach(k => ctxFlags[k] = e.ctx[k] === true);
+    ruleset = sanitizeLocal(e.ruleset);
+    editor.setRuleset(ruleset);
+    buildCtx(); renderHand(); score();
+  };
+  // Merge a partial example ruleset onto MCR Official defaults for the editor.
+  function sanitizeLocal(rs) {
+    const base = JSON.parse(JSON.stringify(catalog.presets[rs.id] || catalog.presets['mcr-official']));
+    return Object.assign(base, rs, { patterns: Object.assign({}, base.patterns, rs.patterns || {}), allow: Object.assign({}, base.allow, rs.allow || {}) });
+  }
+
+  $('runAll').onclick = () => {
+    const grid = $('grid'); grid.innerHTML = '';
+    let done = 0;
+    EX.forEach(e => {
+      const probe = new Promise(resolve => {
+        const s2 = io();
+        s2.emit('scoreProbe', { ruleset: e.ruleset, ctx: e.ctx });
+        s2.on('scoreProbeResult', r => { resolve(r); s2.close(); });
+      });
+      probe.then(r => {
+        const ok = r && r.score && (r.score.breakdown || []).some(b => b.id === e.id);
+        const c = document.createElement('span'); c.className = 'cell ' + (ok ? 'pass' : 'fail');
+        c.textContent = (ok ? '✓ ' : '✗ ') + e.id; grid.appendChild(c);
+        if (++done === EX.length) { const n = grid.querySelectorAll('.pass').length; grid.appendChild(document.createElement('br')); const sum = document.createElement('div'); sum.textContent = `${n}/${EX.length} patterns verified`; sum.style.marginTop = '6px'; grid.appendChild(sum); }
+      });
+    });
+  };
+
+  // ── Editor ──
+  const editor = window.createRulesetEditor($('editor'), catalog, ruleset, rs => { ruleset = rs; score(); });
+
+  buildCtx(); renderHand();
+})();
+</script>
+</body>
+</html>

@@ -1,10 +1,36 @@
 # Dependencies (restored by `npm install`)
 node_modules/
 
-# Local Claude Code settings (machine-specific)
+# Local Claude Code settings / instructions (machine-specific)
 .claude/settings.local.json
+.mcp.json
+CLAUDE.md
+
+# Local dev tooling (personal, not committed)
+tools/release.js
+# Deterministic 3D tile-layout harness (local only)
+public/tiles-preview.html
+# Action-indicator / claim-window prototype (local only)
+public/indicator-preview.html
 
 # Logs and OS cruft
 *.log
 Thumbs.db
 .DS_Store
+
+# Working-tree diff snapshots (local scratch from tooling; never committed)
+_*.diff
+
+# Local data (SQLite account store)
+data/
+
+# Blender working sources + local renders (shipped assets are exported .glb in public/assets/)
+*.blend
+*.blend1
+/assets/
+
+# Imported Open Design 3D environment source (integrated into public/, not committed raw)
+/_from-open-design/
+
+# Superpowers planning artifacts (plans / specs / design docs — local only, not committed)
+docs/superpowers/

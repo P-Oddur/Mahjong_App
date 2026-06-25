@@ -24,45 +24,6 @@ body {
   overflow-x: hidden;
 }
 
-/* ─── TILES ─────────────────────────────────────── */
-.tile {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 58px;
-  background: var(--tile-bg);
-  border: 2px solid var(--tile-border);
-  border-radius: 5px;
-  box-shadow: 2px 3px 0 var(--shadow);
-  user-select: none;
-  position: relative;
-  margin: 2px;
-  flex-shrink: 0;
-  transition: transform 0.12s, box-shadow 0.12s;
-  cursor: default;
-}
-.tile.sm { width: 34px; height: 48px; }
-.tile.sm .tile-glyph { font-size: 22px; }
-.tile.sm .tile-label { font-size: 8px; }
-.tile.clickable { cursor: pointer; }
-.tile.clickable:hover { transform: translateY(-6px); box-shadow: 2px 9px 0 var(--shadow); }
-.tile.selected { transform: translateY(-14px) !important; box-shadow: 0 16px 0 var(--shadow), 0 0 0 2px #4caf50; border-color: #4caf50; }
-.tile.last-discard { box-shadow: 0 0 0 3px var(--gold), 2px 3px 0 var(--shadow); animation: pulse 1s infinite; }
-.tile.tile-back { background: #2c3e50; border-color: #34495e; }
-.tile.tile-back .tile-glyph { color: #546e7a; font-size: 26px; }
-@keyframes pulse { 0%,100% { box-shadow: 0 0 0 2px var(--gold), 2px 3px 0 var(--shadow); } 50% { box-shadow: 0 0 0 4px var(--gold), 2px 3px 0 var(--shadow); } }
-.tile-glyph { font-size: 26px; line-height: 1; }
-.tile-label { font-size: 9px; font-weight: 700; margin-top: 1px; opacity: 0.7; }
-.tile-man .tile-glyph, .tile-man .tile-label { color: var(--man); }
-.tile-pin .tile-glyph, .tile-pin .tile-label { color: var(--pin); }
-.tile-bam .tile-glyph, .tile-bam .tile-label { color: var(--bam); }
-.tile-wind .tile-glyph, .tile-wind .tile-label { color: var(--wind); }
-.tile-dragon-red .tile-glyph, .tile-dragon-red .tile-label { color: var(--dr-red); }
-.tile-dragon-green .tile-glyph, .tile-dragon-green .tile-label { color: var(--dr-green); }
-.tile-dragon-white .tile-glyph, .tile-dragon-white .tile-label { color: var(--dr-white); }
-.tile-flower .tile-glyph, .tile-flower .tile-label { color: var(--flower); }
 
 /* ─── LOBBY (index.html) ─────────────────────────── */
 .lobby-wrap {
@@ -100,6 +61,7 @@ body {
 .btn-primary { background: var(--gold); color: #1a1a1a; }
 .btn-secondary { background: rgba(255,255,255,0.15); color: #fff; border: 2px solid rgba(255,255,255,0.3); }
 .btn:hover { opacity: 0.88; }
+.btn:disabled, .btn:disabled:hover { opacity: 0.45; cursor: not-allowed; }
 .divider { margin: 24px 0; display: flex; align-items: center; gap: 12px; opacity: 0.5; font-size: 0.85rem; }
 .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: rgba(255,255,255,0.3); }
 .error-msg { color: #ff6b6b; font-size: 0.9rem; margin-top: 8px; min-height: 20px; }
@@ -109,7 +71,10 @@ body {
 .room-code-display { font-size: 2.5rem; font-weight: 900; letter-spacing: 8px; color: var(--gold); background: rgba(0,0,0,0.3); border-radius: 10px; padding: 12px 24px; margin-bottom: 8px; }
 .room-code-hint { font-size: 0.82rem; opacity: 0.6; margin-bottom: 24px; }
 .players-list { list-style: none; margin-bottom: 24px; }
-.players-list li { padding: 8px 14px; background: rgba(255,255,255,0.08); border-radius: 8px; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.players-list li { padding: 8px 14px; background: rgba(255,255,255,0.08); border-radius: 8px; margin-bottom: 6px; display: flex; align-items: center; gap: 10px; font-weight: 600; min-height: 42px; }
+/* Empty-seat placeholder: same height as a filled row (min-height above, box-sizing:border-box
+   so the dashed border doesn't add height) so joining/leaving never resizes the card. */
+.players-list li.player-empty { background: transparent; border: 2px dashed rgba(255,255,255,0.18); color: rgba(255,255,255,0.4); justify-content: center; font-style: italic; }
 .player-wind-badge { background: rgba(255,255,255,0.15); border-radius: 4px; padding: 2px 8px; font-size: 0.8rem; }
 .host-badge { font-size: 0.75rem; background: var(--gold); color: #1a1a1a; padding: 2px 6px; border-radius: 4px; font-weight: 700; }
 .waiting-hint { opacity: 0.6; font-size: 0.9rem; margin-top: 8px; }
@@ -129,6 +94,20 @@ body {
   transition: background 0.15s, color 0.15s;
 }
 .bot-remove-btn:hover { background: #c0392b; color: #fff; }
+
+/* Lobby config rows (Match length / Turn timer / React to discard / Pace): a fixed label
+   column left-aligns every control into one column, and all controls share a height so the
+   four rows are equal height (dropdowns stay wider than the seconds inputs). */
+.cfg-row { display: flex; align-items: center; gap: 8px; }
+.cfg-row > label:first-child { flex: 0 0 150px; font-size: 0.82rem; opacity: 0.85; white-space: nowrap; text-align: left; }
+.cfg-control {
+  height: 36px; padding: 0 10px; border-radius: 8px; border: 2px solid rgba(255,255,255,0.3);
+  background: rgba(0,0,0,0.4); color: #fff; font-weight: 700; outline: none;
+}
+select.cfg-control { cursor: pointer; }
+.cfg-num { width: 64px; text-align: center; -moz-appearance: textfield; appearance: textfield; }
+.cfg-num::-webkit-inner-spin-button, .cfg-num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.cfg-off { display: flex; align-items: center; gap: 4px; font-size: 0.8rem; opacity: 0.85; cursor: pointer; user-select: none; white-space: nowrap; }
 
 /* ─── GAME BOARD ──────────────────────────────────── */
 #game-wrap {
@@ -150,13 +129,15 @@ body {
 .status.my-turn { color: #4caf50; }
 .status.claiming { color: var(--gold); }
 .status.waiting { color: rgba(255,255,255,0.7); }
-#wall-info { opacity: 0.7; }
+#wall-info { opacity: 0.7; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 #board {
   flex: 1;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  grid-template-columns: auto 1fr auto;
+  /* Fixed side columns (wide enough for the 4-tile melds + name row) so a turn's
+     ▶ indicator or a changing hand-count can't resize them and ripple the center. */
+  grid-template-columns: 188px 1fr 188px;
   gap: 4px;
   padding: 8px;
   min-height: 0;
@@ -167,7 +148,6 @@ body {
   border-radius: 10px;
   transition: background 0.3s;
 }
-.player-area.active-turn { background: rgba(76,175,80,0.15); }
 
 /* Top player - spans middle column */
 #player-top {
@@ -209,15 +189,6 @@ body {
   align-items: center;
   justify-content: center;
 }
-/* Bottom (me) */
-#player-bottom {
-  grid-column: 2;
-  grid-row: 3;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
 /* Corner cells (empty, decorative) */
 #corner-tl { grid-column:1; grid-row:1; }
 #corner-tr { grid-column:3; grid-row:1; }
@@ -234,34 +205,61 @@ body {
   white-space: nowrap;
 }
 .seat-wind { font-size: 1.1rem; }
-.turn-indicator { color: #4caf50; animation: blink 1s step-start infinite; }
-@keyframes blink { 50% { opacity: 0; } }
 .hand-count { font-size: 0.78rem; opacity: 0.7; margin-left: 4px; }
 
-.player-hand { display: flex; flex-wrap: wrap; justify-content: center; }
 .player-melds { display: flex; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
 .meld { display: flex; margin: 2px; background: rgba(0,0,0,0.2); border-radius: 6px; padding: 2px; }
 .player-flowers { display: flex; flex-wrap: wrap; justify-content: center; margin-top: 4px; }
+/* Top ('opposite') player: flowers + melds share one row (built in renderArea) so a
+   forming meld joins it instead of adding a row that would push the board down. */
+.player-tray { display: flex; align-items: flex-start; justify-content: center; gap: 12px;
+  /* Reserve a full meld-row of height up front (kept even when empty) so the first
+     flower/meld fills it instead of growing the top cell and pushing the board down. */
+  min-height: 64px; }
 
 /* Discard pile */
-#center-info { display: flex; justify-content: space-between; width: 100%; margin-bottom: 6px; font-size: 0.82rem; opacity: 0.8; }
+/* Pinned to the top of the discard window: round·hand at the top-left, wall at the top-right. */
+#center-info { position: absolute; top: 10px; left: 12px; right: 12px; display: flex; justify-content: space-between; font-size: 1rem; opacity: 0.85; z-index: 1; }
 #discard-pile {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  align-content: flex-start;
+  /* Rows grow symmetrically from the middle: one row sits centred; a second pushes the
+     pair apart evenly, the midpoint staying at the window's vertical centre. "safe" keeps
+     a tall pile that overflows from clipping its top rows — it falls back to top-aligned
+     (scrollable) once the tiles no longer fit. */
+  align-content: safe center;
   gap: 1px;
-  max-height: 240px;
+  /* Fill the felt window with a window-driven (not discard-count-driven) height, so the
+     pile never re-centres/jumps as tiles accumulate. Vertical padding just clears the
+     turn-token pucks at the top/bottom edges — so the empty space above/below is that
+     small clearance rather than a big fixed-box margin. */
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 40px 0;
   overflow-y: auto;
   width: 100%;
+  /* Cap each row at 22 small tiles (≈858px) so wide/ultra-wide screens wrap into a
+     neat block instead of one long line; narrower screens still wrap earlier. */
+  max-width: 858px;
+  margin-inline: auto;
 }
 
-/* Side players get rotated hand display */
-#player-left .player-hand, #player-right .player-hand {
+/* Side players (left/right): melds + flowers stack in fixed-width, centered rows.
+   The width is pinned to exactly 4 small tiles so it never changes with hand size
+   or a Gong's 4th tile; flowers wrap to a new centered row after 4 (up to 8 → 2
+   rows). No face-down hand is rendered here. */
+#player-left .player-melds, #player-right .player-melds {
   flex-direction: column;
-  flex-wrap: wrap;
-  max-height: 200px;
+  align-items: center;
+  width: 164px;
 }
+#player-left .player-flowers, #player-right .player-flowers {
+  width: 164px;
+}
+/* Clip rather than widen: keeps the fixed side column from being pushed by a long
+   name row (the melds/flowers are already width-capped above). */
+#player-left, #player-right { overflow: hidden; }
 
 /* Action bar */
 #action-bar {
@@ -272,23 +270,15 @@ body {
   flex-direction: column;
   gap: 6px;
 }
-#claim-timer {
-  height: 5px;
-  background: rgba(255,255,255,0.2);
-  border-radius: 3px;
-  overflow: hidden;
-}
-#claim-timer-bar {
-  height: 100%;
-  background: var(--gold);
-  transition: width 0.1s linear;
-  border-radius: 3px;
-}
 #action-buttons {
   display: flex;
   align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 8px;
+  /* Reserve the tallest-button height so the bar stays put as contextual
+     buttons come and go — the board above no longer jumps. */
+  min-height: 42px;
 }
 .action-btn {
   padding: 9px 20px;
@@ -309,6 +299,46 @@ body {
 .pass-btn { background: rgba(255,255,255,0.15); color: #fff; border: 2px solid rgba(255,255,255,0.3); }
 .claim-sent { font-size: 0.9rem; opacity: 0.8; padding: 4px 0; }
 .hidden { display: none !important; }
+
+/* ─── 2D hand dock — "spread" layout (game.html only; the 3D HUD keeps the compact
+   centred header). buildHandDock(layout:'spread') emits a name-only header followed by
+   a 3-zone body grid: flowers/melds cluster (far left) · centred hand · controls. ─── */
+.hand-dock--spread .hand-dock-header {
+  min-height: 0;            /* name only now — don't reserve a whole tile-row of height */
+  margin-bottom: 2px;
+}
+.hand-dock--spread .hand-dock-body {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;  /* equal flanks keep the hand dead-centre */
+  align-items: end;                     /* clusters sit at the hand's baseline */
+  column-gap: 40px;                     /* comfortably > the hover reach (a +16px
+                                           neighbour shift / ~10px scale) so the
+                                           lift/spread — and its drop-shadow — never
+                                           crowd the flanking clusters */
+  width: 100%;
+}
+/* col 1 — flowers + melds, pinned to the far bottom-left. Melds stack vertically and the
+   flowers wrap, so the cluster stays narrow and only grows taller (mirrors side seats). */
+.hand-dock--spread .hand-dock-side {
+  grid-column: 1; justify-self: start;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  min-width: 0;
+}
+.hand-dock--spread .hand-dock-side .hand-dock-flowers { flex-wrap: wrap; max-width: 168px; }
+.hand-dock--spread .hand-dock-side .hand-dock-melds { flex-direction: column; gap: 4px; }
+/* col 2 — the hand (unchanged); centred by the equal 1fr flanks. */
+.hand-dock--spread .hand-dock-row { grid-column: 2; }
+/* col 3 — Organize / Shuffle side by side, just right of the hand. */
+.hand-dock--spread .hand-dock-controls {
+  grid-column: 3; justify-self: start; margin-bottom: 6px;
+}
+
+/* 2D-only: park the discard panel in the very bottom-right corner (the chat moved to the
+   top-right). The now-tall panel sits BELOW the right seat's vertically-centred melds and
+   laps only over the hand dock's empty far-right. The `body >` lifts specificity above
+   indicator.css (loaded AFTER style.css); in 2D the panel is a direct child of <body>,
+   while the 3D client mounts it inside #hud and keeps the shared corner position. */
+body > .ind-discard-panel { right: 16px; bottom: 16px; }
 
 /* Game over overlay */
 #game-over {
@@ -331,7 +361,214 @@ body {
 #game-over-msg { font-size: 1.2rem; margin-bottom: 28px; opacity: 0.9; }
 #game-over-card .btn-row { justify-content: center; }
 
+/* Round wind (center info) */
+#round-wind { font-weight: 700; color: var(--gold); }
+
+/* Running session score chip next to each player */
+.player-points {
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(0,0,0,0.3);
+  border-radius: 10px;
+  padding: 1px 7px;
+  opacity: 0.85;
+}
+
+/* ─── GAME-OVER SCORE BREAKDOWN ───────────────────── */
+#game-over-msg { margin-bottom: 16px; }
+#game-over-detail { margin-bottom: 24px; text-align: left; }
+.score-head {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.score-faan { font-size: 1.6rem; font-weight: 900; color: var(--gold); }
+.score-limit {
+  font-size: 0.7rem; font-weight: 800; letter-spacing: 1px;
+  background: #f44336; color: #fff; padding: 2px 7px; border-radius: 4px;
+}
+.score-points { font-size: 1rem; opacity: 0.8; }
+.score-breakdown {
+  list-style: none;
+  background: rgba(0,0,0,0.25);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+}
+.score-breakdown li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 0.9rem;
+}
+.score-cn { opacity: 0.55; font-size: 0.8rem; margin-left: 4px; }
+.score-b-faan { color: var(--gold); font-weight: 700; }
+.score-totals { border-top: 1px solid rgba(255,255,255,0.12); padding-top: 10px; }
+.score-total-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 3px 0;
+  font-size: 0.92rem;
+}
+.st-name { font-weight: 600; }
+.pay-plus { color: #4caf50; font-weight: 700; }
+.pay-minus { color: #ff6b6b; font-weight: 700; }
+.pay-zero { opacity: 0.35; }
+.score-running {
+  min-width: 42px;
+  text-align: right;
+  font-weight: 800;
+  opacity: 0.9;
+}
+
+/* ─── CHAT & ACTION BUBBLES ───────────────────────── */
+.chat-panel {
+  width: 100%;
+  background: rgba(0,0,0,0.35);
+  border-radius: 12px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+}
+#lobby-chat { margin-top: 14px; }
+.chat-log {
+  height: 130px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.85rem;
+  padding-right: 4px;
+}
+.chat-msg { line-height: 1.3; word-break: break-word; }
+.chat-name { font-weight: 700; opacity: 0.85; }
+.chat-action { color: var(--gold); font-weight: 700; }
+.emoji-bar { display: flex; flex-wrap: wrap; gap: 3px; }
+.emoji-btn {
+  background: rgba(255,255,255,0.1);
+  border: none;
+  border-radius: 6px;
+  font-size: 1.1rem;
+  line-height: 1.2;
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.emoji-btn:hover { background: rgba(255,255,255,0.25); }
+.chat-input-row { display: flex; gap: 6px; }
+.chat-input-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 2px solid rgba(255,255,255,0.2);
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  outline: none;
+  font-size: 0.9rem;
+}
+.chat-input-row input:focus { border-color: var(--gold); }
+
+/* Game-board chat widget (fixed, collapsible) */
+.chat-widget {
+  position: fixed;
+  right: 12px;
+  top: 0;            /* sit the toggle inside the header band (item 6) */
+  z-index: 60;
+  width: 280px;
+  max-width: calc(100vw - 24px);
+  display: flex;
+  flex-direction: column-reverse;   /* toggle on top, panel opens downward (top-right) */
+  align-items: flex-end;
+  gap: 6px;
+}
+.chat-widget .chat-panel { box-shadow: 0 8px 24px var(--shadow); }
+.chat-widget.collapsed .chat-panel { display: none; }
+.chat-toggle {
+  background: transparent;   /* blend into the header row — no border/shadow (item 6) */
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 1rem;           /* match #status so it centres in the header band */
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: none;
+}
+.chat-toggle:hover { background: rgba(255,255,255,0.12); }
+
+/* Floating action bubble over a seat */
+#bubble-layer { position: fixed; inset: 0; pointer-events: none; z-index: 55; }
+.action-bubble {
+  position: absolute;
+  transform: translateX(-50%);
+  background: var(--gold);
+  color: #1a1a1a;
+  font-weight: 800;
+  font-size: 0.95rem;
+  padding: 6px 12px;
+  border-radius: 14px;
+  white-space: nowrap;
+  box-shadow: 0 4px 12px var(--shadow);
+  pointer-events: none;
+  animation: action-bubble-fade 2.5s ease forwards;
+}
+.action-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: var(--gold);
+  border-bottom: 0;
+}
+@keyframes action-bubble-fade {
+  0%   { opacity: 0; transform: translateX(-50%) scale(0.7); }
+  10%  { opacity: 1; transform: translateX(-50%) scale(1.05); }
+  20%  { transform: translateX(-50%) scale(1); }
+  82%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 2px; }
+
+/* Final standings (match end) */
+#final-standings { margin-top: 14px; }
+.standings-title { font-weight: 800; opacity: 0.85; margin-bottom: 6px; letter-spacing: 0.5px; text-align: center; }
+.standings-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 8px; }
+.standings-row + .standings-row { margin-top: 4px; }
+.standings-leader { background: rgba(240,192,64,0.16); }
+.standings-row .st-rank { width: 30px; text-align: center; font-weight: 800; }
+.standings-row .st-name { flex: 1; }
+.standings-row .st-pts { font-weight: 800; font-variant-numeric: tabular-nums; }
+/* Between-hands vote buttons (Next Hand / End Match): label stacked over a live count. */
+.vote-btn { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.15; gap: 1px; }
+.vote-btn .vote-count { font-size: 0.72rem; font-weight: 800; opacity: 0.85; font-variant-numeric: tabular-nums; }
+.vote-btn.vote-active { outline: 3px solid #fff; outline-offset: 2px; }
+
+/* Scoring-ruleset editor (lobby panel + sandbox) */
+.rs-editor { font-size: 0.82rem; color: #f0e9d8; text-align: left; }
+.rs-row { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.rs-head { gap: 14px; margin-bottom: 6px; }
+.rs-cell { display: flex; align-items: center; gap: 4px; }
+.rs-toggle { flex: 1; }
+.rs-cn { opacity: 0.6; }
+.rs-unit { opacity: 0.6; width: 28px; }
+.rs-valcell { width: 86px; justify-content: flex-end; }
+.rs-input { background: rgba(0,0,0,0.4); color: #fff; border: 1px solid rgba(255,255,255,0.25); border-radius: 6px; padding: 4px 6px; font: inherit; }
+.rs-num { width: 50px; }
+.rs-globals { display: flex; flex-wrap: wrap; gap: 8px 12px; margin: 6px 0; }
+.rs-glabel { display: flex; flex-direction: column; font-size: 0.75rem; opacity: 0.9; gap: 2px; }
+.rs-list { max-height: 300px; overflow-y: auto; border-top: 1px solid rgba(240,192,64,0.2); margin-top: 8px; padding-top: 6px; }
+.rs-tier { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--gold); margin: 8px 0 2px; opacity: 0.8; }

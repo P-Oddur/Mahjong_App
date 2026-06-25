@@ -1,11 +1,12 @@
 {
   "name": "mahjong-app",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "start:tailscale": "node server.js --tailscale",
     "dev": "nodemon server.js",
-    "test": "node test/e2e.js"
+    "test": "node test/scoring.test.js && node test/rulesets.test.js && node test/library.test.js && node test/modes.test.js && node test/mcr-extended.test.js && node test/mcr.test.js && node test/mcr-nonrepeat.test.js && node test/hk-nonrepeat.test.js && node test/ron-concealed.test.js && node test/special-context.test.js && node test/knitted.test.js && node test/waits.test.js && node test/mcr-catalog.test.js && node test/rules-parity.test.js && node test/accounts.test.js && node test/js3d-seat-geometry.test.js && node test/js3d-camera-math.test.js && node test/js3d-tile-math.test.js && node test/e2e.js && node test/two-humans.e2e.js && node test/vote.test.js && node test/timers.test.js && node test/pace.test.js && node test/rules-client-tiles.test.js && node test/indicator-core.test.js && node test/review-fixes.test.js"
   },
   "dependencies": {
     "express": "^4.18.2",

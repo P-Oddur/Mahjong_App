@@ -30,14 +30,36 @@ function tileUsefulness(tile, hand) {
   return score;
 }
 
-function chooseDiscard(hand) {
-  let worst = null;
-  let worstScore = Infinity;
-  for (const t of hand) {
-    const s = tileUsefulness(t, hand);
-    if (s < worstScore) { worstScore = s; worst = t; }
+// Pick a tile to discard. Difficulty tunes the behaviour:
+//   easy   – half the time tosses a random tile (loose, weak play)
+//   normal – discards the least useful tile (default; original behaviour)
+//   hard   – among the least useful tiles, prefers one already seen in the
+//            discard pile (safer to part with)
+function chooseDiscard(hand, difficulty = 'normal', discardPile = []) {
+  if (!hand.length) return null;
+  const scored = hand.map(t => ({ t, s: tileUsefulness(t, hand) })).sort((a, b) => a.s - b.s);
+  const worst = scored[0].t;
+
+  if (difficulty === 'easy') {
+    if (Math.random() < 0.5) return hand[Math.floor(Math.random() * hand.length)];
+    return worst;
   }
-  return worst;
+
+  if (difficulty === 'hard') {
+    // Among the least-useful tiles, prefer one already seen in the discard pile.
+    const min = scored[0].s;
+    const pileCount = {};
+    for (const d of discardPile) { const k = `${d.suit}:${d.value}`; pileCount[k] = (pileCount[k] || 0) + 1; }
+    let best = worst, bestSeen = -1;
+    for (const { t, s } of scored) {
+      if (s > min + 10) break; // scored is ascending; past the low-usefulness band, stop
+      const seen = pileCount[`${t.suit}:${t.value}`] || 0;
+      if (seen > bestSeen) { bestSeen = seen; best = t; }
+    }
+    return best;
+  }
+
+  return worst; // normal
 }
 
 // Find a concealed 4-of-a-kind worth declaring, if any
@@ -63,16 +85,24 @@ function countPairs(tiles) {
 }
 
 // Decide how to respond to a discard. Returns {type, tileIds} or null to pass.
-function decideClaim(hand, melds, discard, isNext) {
-  const valid = getValidClaims(hand, melds, discard, isNext);
+// Difficulty tunes pong/chow aggression (wins and kongs are always taken):
+//   easy   – passes on most pong/chow chances
+//   normal – claims only if it keeps a pair as the head (default; original)
+//   hard   – claims whenever legal (more aggressive)
+function decideClaim(hand, melds, discard, isNext, difficulty = 'normal', ruleset) {
+  const valid = getValidClaims(hand, melds, discard, isNext, ruleset);
   if (valid.includes('win')) return { type: 'win' };
   if (valid.includes('kong')) return { type: 'kong' };
+
+  // Easy bots are passive — they skip most pong/chow opportunities.
+  if (difficulty === 'easy' && Math.random() < 0.75) return null;
+  const aggressive = difficulty === 'hard';
 
   if (valid.includes('pong')) {
     const used = hand.filter(t => t.suit === discard.suit && t.value === discard.value).slice(0, 2);
     const remaining = hand.filter(t => !used.includes(t));
-    // Only pong if we still have a pair left to serve as the head
-    if (countPairs(remaining) >= 1) return { type: 'pong' };
+    // Only pong if we still have a pair left to serve as the head (unless aggressive)
+    if (aggressive || countPairs(remaining) >= 1) return { type: 'pong' };
   }
 
   if (valid.includes('chow')) {
@@ -80,7 +110,7 @@ function decideClaim(hand, melds, discard, isNext) {
     if (opts.length > 0) {
       const fromHand = opts[0].filter(t => t !== discard);
       const remaining = hand.filter(t => !fromHand.includes(t));
-      if (countPairs(remaining) >= 1) {
+      if (aggressive || countPairs(remaining) >= 1) {
         return { type: 'chow', tileIds: fromHand.map(t => t.id) };
       }
     }

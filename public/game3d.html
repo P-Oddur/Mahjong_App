@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mahjong 3D</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="shared/indicator.css">
+
+  <!-- Three.js r0.184.0 via jsdelivr import map (no build step). Modules under
+       /js3d resolve `three` and `three/addons/` against these URLs.
+       WebGPU build: `three` resolves to three.webgpu.js (exposes THREE.WebGPURenderer);
+       three/webgpu and three/tsl aliases satisfy any direct imports of those paths. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.webgpu.js",
+      "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.webgpu.js",
+      "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.tsl.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <style>
+    /* Minimal page chrome — the 3D canvas fills the viewport; the HUD overlays it.
+       Detailed HUD styling lives in hud.js (it builds/styles its own widgets) so
+       this file only establishes the full-screen layout and overlay stacking. */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #0a0a0c; color: #f0e9d8;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      -webkit-user-select: none; user-select: none;
+    }
+    /* Full-screen render target. */
+    #game3d-canvas {
+      position: fixed; inset: 0;
+      width: 100%; height: 100%;
+      display: block; touch-action: none;
+    }
+    /* HUD overlay container: sits above the canvas, passes pointer events through
+       except where individual HUD widgets re-enable them. hud.js fills the empty
+       divs below; they intentionally start empty here. */
+    #hud {
+      position: fixed; inset: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+    #hud .hud-interactive { pointer-events: auto; }
+
+    /* Center reticle. */
+    #hud-reticle {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 14px; height: 14px;
+      pointer-events: none;
+    }
+
+    /* Top status banner + wall counter. */
+    #hud-status {
+      position: absolute; top: 12px; left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+    }
+
+    /* Bottom action bar (claim/discard/win/pass buttons). Floats above the dock. */
+    #hud-action-bar {
+      position: absolute; left: 0; right: 0; bottom: 150px;
+      display: flex; flex-direction: column; align-items: center;
+    }
+
+    /* Always-on hand dock (shared styling lives in /shared/hand-dock.css). */
+    #hud-dock {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      display: flex; justify-content: center;
+    }
+
+    /* Game-over / standings overlay (host Next Hand, Vote, Lobby). */
+    #hud-game-over {
+      position: absolute; inset: 0;
+      display: none;
+      align-items: center; justify-content: center;
+      background: rgba(0, 0, 0, 0.7);
+    }
+
+    /* Neon "雀" loading splash (ported from the Open Design original). main.js hides #loading once
+       the first frame renders; the opacity transition gives it a soft fade-out. */
+    #loading {
+      position: fixed; inset: 0; z-index: 50;
+      display: grid; place-content: center; justify-items: center; gap: 22px;
+      background: radial-gradient(120% 90% at 50% 38%, #0d1618 0%, #06090a 70%);
+      color: #e9e2d4;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      transition: opacity 0.7s ease;
+    }
+    #loading .mark {
+      font-family: "Songti SC", "SimSun", serif;
+      font-size: clamp(64px, 12vw, 132px);
+      line-height: 1; font-weight: 700;
+      color: #14191a;                         /* near-black; the magenta glow IS the sign */
+      text-shadow:
+        0 0 6px #ff2e96,
+        0 0 22px rgba(255, 46, 150, 0.7),
+        0 0 60px rgba(255, 46, 150, 0.35);
+      animation: buzz 4.5s infinite;          /* neon flicker */
+    }
+    @keyframes buzz {
+      0%, 18%, 22%, 100% { opacity: 1; }
+      19%, 21% { opacity: 0.45; }
+      20% { opacity: 0.85; }
+    }
+    #loading .load-label {
+      font-size: 12px; letter-spacing: 0.34em; text-transform: uppercase; color: #8b9694;
+    }
+    #loading .bar {
+      width: 168px; height: 2px; background: rgba(255, 255, 255, 0.08);
+      overflow: hidden; border-radius: 2px;
+    }
+    #loading .bar::after {
+      content: ""; display: block; height: 100%; width: 40%;
+      background: linear-gradient(90deg, transparent, #18e39a, transparent);
+      animation: slide 1.3s infinite ease-in-out;   /* jade progress sweep */
+    }
+    @keyframes slide { 0% { transform: translateX(-120%); } 100% { transform: translateX(320%); } }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <!-- Full-screen render target. -->
+  <canvas id="game3d-canvas"></canvas>
+
+  <!-- Thin HUD overlay container. These are intentionally EMPTY — hud.js (built by
+       another agent) populates each one. Their ids form the HUD contract. -->
+  <div id="hud">
+    <div id="hud-reticle"></div>
+    <div id="hud-status"></div>
+    <div id="hud-action-bar"></div>
+    <div id="hud-dock" class="hud-interactive"></div>
+    <div id="hud-game-over"></div>
+  </div>
+
+  <!-- Neon "雀" loading splash, hidden once the scene is ready. -->
+  <div id="loading">
+    <div class="mark">雀</div>
+    <div class="bar"></div>
+    <div class="load-label">Lighting the parlour…</div>
+  </div>
+
+  <!-- Same socket.io client URL game.html uses (served by the backend). Must load
+       before any module that calls io(). -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <!-- The orchestrator. Reads sessionStorage, connects, rejoins, builds the scene,
+       and runs the render loop. All other modules are imported by main.js. -->
+  <script type="module" src="/js3d/main.js"></script>
+</body>
+</html>

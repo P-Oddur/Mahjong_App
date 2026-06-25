@@ -1,0 +1,46 @@
+/* public/shared/indicator.css — shared styling for the turn token, the claim
+   perimeter halo, and the dock-styled bottom-right discard panel (2D + 3D). */
+
+.ind-halo { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+  pointer-events: none; overflow: visible; }
+.ind-halo-rect { fill: none; stroke-linecap: round; transition: stroke .2s linear; }
+
+/* Token — conic pie-dial puck. Transition DURATION is set by JS from TIMING.tokenSlideMs. */
+.ind-token { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none;
+  z-index: 6; transition-property: transform; transition-timing-function: cubic-bezier(.5,.05,.2,1); }
+.ind-token-ring { position: absolute; left: -33px; top: -33px; width: 66px; height: 66px;
+  border-radius: 50%;
+  background: conic-gradient(var(--col,#f0c040) calc(var(--frac,1)*360deg), rgba(255,255,255,.14) 0deg);
+  box-shadow: 0 4px 14px rgba(0,0,0,.5), 0 0 0 4px rgba(0,0,0,.25); }
+.ind-token-num { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+  width: 42px; height: 42px; border-radius: 50%; background: rgba(12,16,22,.8);
+  display: grid; place-items: center; font-size: 1.3rem; font-weight: 800; color: #fff;
+  font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+.ind-token.idle { filter: grayscale(1); opacity: .5; }
+.ind-token.idle .ind-token-ring { background: rgba(255,255,255,.12); box-shadow: none; }
+.ind-token.idle .ind-token-num { display: none; }
+
+/* Bottom-right discard panel — mirrors the hand-dock look (hand-dock.css). The revealed
+   tile is the centred hero; the claim countdown stacks beneath it, the caption last.
+   Sits above the (taller, spread) hand dock so the two never overlap. */
+.ind-discard-panel { position: fixed; right: 18px; bottom: 164px; z-index: 7;
+  display: none; flex-direction: column; align-items: center; gap: 8px;
+  padding: 14px 20px 16px; border-radius: 16px; color: #e8e0c8;
+  background: linear-gradient(to top, rgba(8,10,12,0.94), rgba(8,10,12,0.66));
+  box-shadow: 0 10px 26px rgba(0,0,0,.55); transition: opacity .25s; }
+.ind-dp-tilewrap { position: relative; display: grid; place-items: center; }
+.ind-dp-tilewrap .tile { width: 128px; height: 176px; }   /* big hero tile (3× the original 42×58) */
+.ind-dp-num { font-size: 2.4rem; line-height: 1; font-weight: 800; font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+.ind-dp-cap { font-size: .9rem; color: #e8e0c8; opacity: .85; }
+.ind-discard-panel.claimable { cursor: pointer; pointer-events: auto; }
+
+/* Ambiguous chow: tappable, but a tap can't pick between options — flare to point at
+   the per-option buttons in the action bar rather than claiming. */
+.ind-discard-panel.ind-ambiguous { cursor: pointer; pointer-events: auto; }
+.ind-discard-panel.ind-flash { animation: ind-flash .35s ease; }
+@keyframes ind-flash {
+  0%   { box-shadow: 0 10px 26px rgba(0,0,0,.55), 0 0 0 0 rgba(240,192,64,.0); }
+  35%  { box-shadow: 0 10px 26px rgba(0,0,0,.55), 0 0 0 4px rgba(240,192,64,.85); }
+  100% { box-shadow: 0 10px 26px rgba(0,0,0,.55), 0 0 0 0 rgba(240,192,64,.0); }
+}
